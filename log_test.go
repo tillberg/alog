@@ -33,7 +33,7 @@ func TestTempLines(t *testing.T) {
     assert.Equal(t, "Hello ", buf.String())
     buf.Reset()
     writer.Print(" Dan, ")
-    assert.Equal(t, "Dan, ", buf.String())
+    assert.Equal(t, " Dan, ", buf.String())
     buf.Reset()
     writer.Print("how are you?\n")
     assert.Equal(t, "how are you?\n", buf.String())
