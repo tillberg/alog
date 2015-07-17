@@ -55,6 +55,7 @@ type Logger struct {
     buf    bytes.Buffer     // for accumulating text to write
     bufReader *bufio.Reader
     tmp    []byte     // for formatting the current line
+    isTempVisible bool
 }
 
 // New creates a new Logger.   The out variable sets the
@@ -64,6 +65,7 @@ type Logger struct {
 func New(out io.Writer, prefix string, flag int) *Logger {
     var l = &Logger{out: out, prefix: prefix, flag: flag}
     l.bufReader = bufio.NewReader(&l.buf)
+    l.isTempVisible = true
     return l
 }
 
@@ -155,7 +157,7 @@ func (l *Logger) Output(calldepth int, s string) error {
     defer l.mu.Unlock()
     l.buf.WriteString(s)
     var currLine string
-    l.bufReader.Reset(&l.buf) // Is this inefficient?
+    l.bufReader.Reset(&l.buf)
     for true {
         currLine, err = l.bufReader.ReadString('\n')
         // fmt.Printf("%s %s", currLine, err)
@@ -185,7 +187,6 @@ func (l *Logger) Output(calldepth int, s string) error {
         }
     }
     // Write the unfinished currLine back to buf
-    // l.buf.Reset() // XXX This may be inefficient
     l.buf.WriteString(currLine)
     return nil
 }
@@ -279,6 +280,12 @@ func (l *Logger) Close() {
     } else {
         l.mu.Unlock()
     }
+}
+
+func (l *Logger) SetCurrLineVisible(flag bool) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    l.isTempVisible = flag
 }
 
 // SetOutput sets the output destination for the standard logger.
