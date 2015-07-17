@@ -13,6 +13,8 @@
 package log
 
 import (
+    "bufio"
+    "bytes"
     "fmt"
     "io"
     "os"
@@ -50,7 +52,9 @@ type Logger struct {
     prefix string     // prefix to write at beginning of each line
     flag   int        // properties
     out    io.Writer  // destination for output
-    buf    []byte     // for accumulating text to write
+    buf    bytes.Buffer     // for accumulating text to write
+    bufReader *bufio.Reader
+    tmp    []byte     // for formatting the current line
 }
 
 // New creates a new Logger.   The out variable sets the
@@ -58,7 +62,9 @@ type Logger struct {
 // The prefix appears at the beginning of each generated log line.
 // The flag argument defines the logging properties.
 func New(out io.Writer, prefix string, flag int) *Logger {
-    return &Logger{out: out, prefix: prefix, flag: flag}
+    var l = &Logger{out: out, prefix: prefix, flag: flag}
+    l.bufReader = bufio.NewReader(&l.buf)
+    return l
 }
 
 // SetOutput sets the output destination for the logger.
@@ -144,27 +150,44 @@ func (l *Logger) Output(calldepth int, s string) error {
     now := time.Now() // get this early.
     var file string
     var line int
+    var err error
     l.mu.Lock()
     defer l.mu.Unlock()
-    if l.flag&(Lshortfile|Llongfile) != 0 {
-        // release lock while getting caller info - it's expensive.
-        l.mu.Unlock()
-        var ok bool
-        _, file, line, ok = runtime.Caller(calldepth)
-        if !ok {
-            file = "???"
-            line = 0
+    l.buf.WriteString(s)
+    var currLine string
+    l.bufReader.Reset(&l.buf) // Is this inefficient?
+    for true {
+        currLine, err = l.bufReader.ReadString('\n')
+        // fmt.Printf("%s %s", currLine, err)
+        if err != nil || currLine == "" {
+            if (err == io.EOF) {
+                break
+            }
+            return err
         }
-        l.mu.Lock()
+        l.tmp = l.tmp[:0]
+        l.formatHeader(&l.tmp, now, file, line)
+        if l.flag&(Lshortfile|Llongfile) != 0 {
+            // release lock while getting caller info - it's expensive.
+            l.mu.Unlock()
+            var ok bool
+            _, file, line, ok = runtime.Caller(calldepth)
+            if !ok {
+                file = "???"
+                line = 0
+            }
+            l.mu.Lock()
+        }
+        l.tmp = append(l.tmp, currLine...)
+        _, err := l.out.Write(l.tmp)
+        if err != nil {
+            return err
+        }
     }
-    l.buf = l.buf[:0]
-    l.formatHeader(&l.buf, now, file, line)
-    l.buf = append(l.buf, s...)
-    if len(s) == 0 || s[len(s)-1] != '\n' {
-        l.buf = append(l.buf, '\n')
-    }
-    _, err := l.out.Write(l.buf)
-    return err
+    // Write the unfinished currLine back to buf
+    // l.buf.Reset() // XXX This may be inefficient
+    l.buf.WriteString(currLine)
+    return nil
 }
 
 // Printf calls l.Output to print to the logger.
@@ -246,6 +269,16 @@ func (l *Logger) SetPrefix(prefix string) {
     l.mu.Lock()
     defer l.mu.Unlock()
     l.prefix = prefix
+}
+
+func (l *Logger) Close() {
+    l.mu.Lock()
+    if l.buf.Len() > 0 {
+        l.mu.Unlock()
+        l.Output(2, "\n")
+    } else {
+        l.mu.Unlock()
+    }
 }
 
 // SetOutput sets the output destination for the standard logger.
