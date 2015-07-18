@@ -187,6 +187,8 @@ func TestAddColorCode(t *testing.T) {
     buf.Reset()
 }
 
+// non-english example text drawn mostly from http://www.columbia.edu/~fdc/utf8/
+
 func TestTermWidthTruncation(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
@@ -195,20 +197,37 @@ func TestTermWidthTruncation(t *testing.T) {
     var writer2 = New(&buf, "@[red]$$ ", 0)
     writer2.EnableColorTemplate()
     writer1.SetTerminalWidth(30) // Applies to both because they both write to buf
-    writer1.Print("@[yellow]1234567890")
-    assert.Equal("\033[32m$$ \033[39m\033[33m1234567890", buf.String())
+    writer1.Print("@[yellow]𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸")
+    assert.Equal("\033[32m$$ \033[39m\033[33m𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸", buf.String())
     buf.Reset()
-    writer2.Print("@[blue]ABCDEFGHIJ")
-    assert.Equal(" | \033[31m$$ \033[39m\033[34mABCDEFGHIJ", buf.String())
+    writer2.Print("@[blue]ᚠᛇᚻᛒᛦᚦᚠᚱᚩᚠ")
+    assert.Equal(" | \033[31m$$ \033[39m\033[34mᚠᛇᚻᛒᛦᚦᚠᚱᚩᚠ", buf.String())
     buf.Reset()
-    writer1.Print("123456789012345678901234567890")
-    assert.Contains(buf.String(), "ABCDE")
+    writer1.Print("1234567890σπασμένα1234567890")
+    assert.Contains(buf.String(), "ᚠᛇᚻᛒᛦ", "We should try to show a little of each partial line if possible")
     buf.Reset()
+}
+
+func TestNonLatinRunes(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    AddAnsiCode("awesome", 1)
+    AddAnsiCode("sauce", 36)
+    var writer = New(&buf, "我能吞下玻璃而不伤身体。", 0)
+    writer.Print("أنا قادر على أكل الزجاج و هذا")
+    assert.Equal("我能吞下玻璃而不伤身体。أنا قادر على أكل الزجاج و هذا", buf.String())
+    buf.Reset()
+    writer.Print(" لا يؤلمني.\n")
+    assert.Equal(" لا يؤلمني.\n", buf.String())
+    buf.Reset()
+    writer.SetTerminalWidth(20)
+    // This has a combining diacritic after/in the third character.
+    writer.Print("ನನಗೆ ಹಾನಿ ಆಗದೆ, ನಾನು ಗಜನ್ನು ತಿನಬಹುದು")
+    assert.Equal("我能吞下玻璃而不伤身体。ನನಗೆ...", buf.String())
 }
 
 // TODO test &/or implement:
 // - Apply color templates in e.g. Printf instead of in Output so that we can do e.g. Printf("@[red:%s]", "@[green:this is not green]")
-// - Replace all length stuff with stuff that's actually rune-aware
 // - Process carriage returns correctly
 // - Set custom ANSI color escape characters or custom regexp
 // - Set custom ANSI regexp etc globally
