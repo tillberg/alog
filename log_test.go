@@ -133,9 +133,37 @@ func TestAnsiSpanningLines(t *testing.T) {
     buf.Reset()
 }
 
+func TestDisableColor(t *testing.T) {
+    var buf bytes.Buffer
+    var writer = New(&buf, "\033[32m$$ ", 0)
+    defer writer.Close()
+    var input = "\033[31mI \033[32mlike \033[33mcolors\033[0m\n"
+    var withEscapes = "\033[32m$$ \033[0m\033[31mI \033[32mlike \033[33mcolors\033[0m\n"
+    var withoutEscapes = "$$ I like colors\n"
+    // Note: behavior is undefined when enabling/disabling color in the middle of partial lines
+    writer.Print(input)
+    assert.Equal(t, withEscapes, buf.String())
+    buf.Reset()
+    DisableColor()
+    writer.Print(input)
+    assert.Equal(t, withoutEscapes, buf.String())
+    buf.Reset()
+    writer.EnableColor()
+    writer.Print(input)
+    assert.Equal(t, withEscapes, buf.String(), "Enabling color on a specific Logger overrides global setting")
+    buf.Reset()
+    writer.DisableColor()
+    writer.Print(input)
+    assert.Equal(t, withoutEscapes, buf.String())
+    buf.Reset()
+    EnableColor()
+    writer.Print(input)
+    assert.Equal(t, withoutEscapes, buf.String(), "Disabling color on a specific Logger overrides global setting")
+    buf.Reset()
+}
+
 // TODO test &/or implement:
 // - Max temp line length, with & without ANSI color escapes mixed in.
-// - Enable/disable color globally
 // - Set custom ANSI color escape characters or custom regexp
 // - Set custom ANSI regexp etc globally
 // - Pair multiple ANSI escapes in a span, e.g. @[green,dim:this is dim-green text]
