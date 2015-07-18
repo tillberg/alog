@@ -9,7 +9,8 @@ import (
 func TestPrint(t *testing.T) {
     var buf bytes.Buffer
     var writer = New(&buf, "", 0)
-    writer.SetCurrLineVisible(false)
+    defer writer.Close()
+    writer.HidePartialLines()
     writer.Print("Hello ")
     writer.Print("Dan, ")
     writer.Print("how are you?\n")
@@ -89,3 +90,29 @@ func TestMultipleTempLinesDiffWriters(t *testing.T) {
     assert.Equal(t, " done.\n", buf2.String())
     buf2.Reset()
 }
+
+func TestAnsiColors(t *testing.T) {
+    var buf bytes.Buffer
+    var writer = New(&buf, "", 0)
+    defer writer.Close()
+    writer.Print("Here is @[red:some red text].\n")
+    assert.Equal(t, "Here is @[red:some red text].\n", buf.String())
+    buf.Reset()
+    writer.EnableColor()
+    writer.Print("Here is @[red:some red text].\n")
+    assert.Equal(t, "Here is \033[31msome red text\033[m.\n", buf.String())
+    buf.Reset()
+    writer.Print("Here is some @[green]green text@[r] and @[cyan:cyan text\nspanning two lines].\n")
+    assert.Equal(t, "Here is some \033[32mgreen text\033[m and \033[36mcyan text\nspanning two lines\033[m.\n", buf.String())
+    buf.Reset()
+    writer.DisableColor()
+    writer.Print("Here is @[red:some red text].\n")
+    assert.Equal(t, "Here is @[red:some red text].\n", buf.String())
+    buf.Reset()
+}
+
+// TODO test &/or implement:
+// - Max temp line length, with & without ANSI color escapes mixed in.
+// - Enable/disable color globally
+// - Set custom ANSI color escape characters or custom regexp
+// - Set custom ANSI regexp etc globally
