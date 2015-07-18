@@ -100,10 +100,13 @@ func TestAnsiColors(t *testing.T) {
     buf.Reset()
     writer.EnableColorTemplate()
     writer.Print("Here is @[red:some red text].\n")
-    assert.Equal(t, "Here is \033[31msome red text\033[0m.\n", buf.String())
+    assert.Equal(t, "Here is \033[31msome red text\033[39m.\n", buf.String())
+    buf.Reset()
+    writer.Print("Here is @[dim:some dim text].\n")
+    assert.Equal(t, "Here is \033[2msome dim text\033[0m.\n", buf.String())
     buf.Reset()
     writer.Print("Here is some @[green]green text@[r] and @[garbage] and @[cyan:cyan text].\n")
-    assert.Equal(t, "Here is some \033[32mgreen text\033[0m and @[garbage] and \033[36mcyan text\033[0m.\n", buf.String())
+    assert.Equal(t, "Here is some \033[32mgreen text\033[0m and @[garbage] and \033[36mcyan text\033[39m.\n", buf.String())
     buf.Reset()
     writer.DisableColorTemplate()
     writer.Print("Here is @[red:some red text].\n")
@@ -116,7 +119,7 @@ func TestAnsiSpanningLines(t *testing.T) {
     var writer = New(&buf, "\033[32m$$ ", 0)
     defer writer.Close()
     writer.Print("Hello, ")
-    assert.Equal(t, "\033[32m$$ \033[0mHello, ", buf.String(), "we auto-reset ansi colors after the prefix")
+    assert.Equal(t, "\033[32m$$ \033[39mHello, ", buf.String(), "we auto-reset ansi colors after the prefix")
     buf.Reset()
     writer.Print("we're writing\033[31m")
     assert.Equal(t, "we're writing\033[31m", buf.String())
@@ -124,12 +127,12 @@ func TestAnsiSpanningLines(t *testing.T) {
     writer.Print(" in red")
     assert.Equal(t, " in red", buf.String())
     buf.Reset()
-    writer.Print("even\nwhen we're on a new line.\033[0m\n")
-    assert.Equal(t, "even\033[0m\n\033[32m$$ \033[0m\033[31mwhen we're on a new line.\033[0m\n", buf.String())
+    writer.Print("even\nwhen we're on a new line.\033[39m\n")
+    assert.Equal(t, "even\033[39m\n\033[32m$$ \033[39m\033[31mwhen we're on a new line.\033[39m\n", buf.String())
     buf.Reset()
     writer.EnableColorTemplate()
     writer.Print("@[blue:templated\nnewlines\ntoo].\n")
-    assert.Equal(t, "\033[32m$$ \033[0m\033[34mtemplated\033[0m\n\033[32m$$ \033[0m\033[34mnewlines\033[0m\n\033[32m$$ \033[0m\033[34mtoo\033[0m.\n", buf.String())
+    assert.Equal(t, "\033[32m$$ \033[39m\033[34mtemplated\033[39m\n\033[32m$$ \033[39m\033[34mnewlines\033[39m\n\033[32m$$ \033[39m\033[34mtoo\033[39m.\n", buf.String())
     buf.Reset()
 }
 
@@ -137,8 +140,8 @@ func TestDisableColor(t *testing.T) {
     var buf bytes.Buffer
     var writer = New(&buf, "\033[32m$$ ", 0)
     defer writer.Close()
-    var input = "\033[31mI \033[32mlike \033[33mcolors\033[0m\n"
-    var withEscapes = "\033[32m$$ \033[0m\033[31mI \033[32mlike \033[33mcolors\033[0m\n"
+    var input = "\033[31mI \033[32mlike \033[33mcolors\033[39m\n"
+    var withEscapes = "\033[32m$$ \033[39m\033[31mI \033[32mlike \033[33mcolors\033[39m\n"
     var withoutEscapes = "$$ I like colors\n"
     // Note: behavior is undefined when enabling/disabling color in the middle of partial lines
     writer.Print(input)
@@ -162,8 +165,22 @@ func TestDisableColor(t *testing.T) {
     buf.Reset()
 }
 
+func TestAddColorCode(t *testing.T) {
+    var buf bytes.Buffer
+    AddAnsiCode("awesome", 1)
+    AddAnsiCode("sauce", 36)
+    // var writer = New(&buf, "@[dim:$$] ", 0)
+    var writer = New(&buf, "@[awesome,sauce:$$] ", 0)
+    writer.EnableColorTemplate()
+    writer.Print("@[sauce,awesome]text@[r]\n")
+    assert.Equal(t, "\033[1m\033[36m$$\033[0m \033[36m\033[1mtext\033[0m\n", buf.String())
+    buf.Reset()
+    writer.Print("@[awesome]this is all bright @[sauce:text], even this.@[r]\n")
+    assert.Equal(t, "\033[1m\033[36m$$\033[0m \033[1mthis is all bright \033[36mtext\033[39m, even this.\033[0m\n", buf.String())
+    buf.Reset()
+}
+
 // TODO test &/or implement:
 // - Max temp line length, with & without ANSI color escapes mixed in.
 // - Set custom ANSI color escape characters or custom regexp
 // - Set custom ANSI regexp etc globally
-// - Pair multiple ANSI escapes in a span, e.g. @[green,dim:this is dim-green text]
