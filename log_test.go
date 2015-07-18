@@ -98,14 +98,14 @@ func TestAnsiColors(t *testing.T) {
     writer.Print("Here is @[red:some red text].\n")
     assert.Equal(t, "Here is @[red:some red text].\n", buf.String())
     buf.Reset()
-    writer.EnableColor()
+    writer.EnableColorTemplate()
     writer.Print("Here is @[red:some red text].\n")
-    assert.Equal(t, "Here is \033[31msome red text\033[m.\n", buf.String())
+    assert.Equal(t, "Here is \033[31msome red text\033[0m.\n", buf.String())
     buf.Reset()
-    writer.Print("Here is some @[green]green text@[r] and @[cyan:cyan text\nspanning two lines].\n")
-    assert.Equal(t, "Here is some \033[32mgreen text\033[m and \033[36mcyan text\nspanning two lines\033[m.\n", buf.String())
+    writer.Print("Here is some @[green]green text@[r] and @[cyan:cyan text].\n")
+    assert.Equal(t, "Here is some \033[32mgreen text\033[0m and \033[36mcyan text\033[0m.\n", buf.String())
     buf.Reset()
-    writer.DisableColor()
+    writer.DisableColorTemplate()
     writer.Print("Here is @[red:some red text].\n")
     assert.Equal(t, "Here is @[red:some red text].\n", buf.String())
     buf.Reset()
@@ -116,3 +116,5 @@ func TestAnsiColors(t *testing.T) {
 // - Enable/disable color globally
 // - Set custom ANSI color escape characters or custom regexp
 // - Set custom ANSI regexp etc globally
+// - Pair multiple ANSI escapes in a span, e.g. @[green,dim:this is dim-green text]
+// - Handle ANSI colors (and templates) across newlines

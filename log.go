@@ -77,6 +77,9 @@ type Logger struct {
     colorEnabled         *bool
     colorTemplateEnabled *bool
     colorRegexp          *regexp.Regexp
+    callerFile           string
+    callerLine           int
+    now                  time.Time
 }
 
 // New creates a new Logger.   The out variable sets the
@@ -102,12 +105,18 @@ func (l *Logger) isColorEnabled() bool {
     return isTrueDefaulted(l.colorEnabled, defaultColorEnabled)
 }
 
-func (l *Logger) isColorTemplateEnabled() bool {
-    return isTrueDefaulted(l.colorTemplateEnabled, defaultColorTemplateEnabled)
-}
-
 func (l *Logger) isPartialLinesVisible() bool {
     return isTrueDefaulted(l.partialLinesVisible, defaultPartialLinesVisible)
+}
+
+func (l *Logger) getColorRegexp() *regexp.Regexp {
+    if !isTrueDefaulted(l.colorTemplateEnabled, defaultColorTemplateEnabled) {
+        return nil
+    }
+    if l.colorRegexp != nil {
+        return l.colorRegexp
+    }
+    return defaultColorRegexp
 }
 
 // SetOutput sets the output destination for the logger.
@@ -136,14 +145,11 @@ func itoa(buf *[]byte, i int, wid int) {
     *buf = append(*buf, b[bp:]...)
 }
 
-func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
+func (l *Logger) formatHeader(buf *[]byte) {
     *buf = append(*buf, l.prefix...)
-    if l.flag&LUTC != 0 {
-        t = t.UTC()
-    }
     if l.flag&(Ldate|Ltime|Lmicroseconds) != 0 {
         if l.flag&Ldate != 0 {
-            year, month, day := t.Date()
+            year, month, day := l.now.Date()
             itoa(buf, year, 4)
             *buf = append(*buf, '/')
             itoa(buf, int(month), 2)
@@ -152,7 +158,7 @@ func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
             *buf = append(*buf, ' ')
         }
         if l.flag&(Ltime|Lmicroseconds) != 0 {
-            hour, min, sec := t.Clock()
+            hour, min, sec := l.now.Clock()
             itoa(buf, hour, 2)
             *buf = append(*buf, ':')
             itoa(buf, min, 2)
@@ -160,25 +166,26 @@ func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
             itoa(buf, sec, 2)
             if l.flag&Lmicroseconds != 0 {
                 *buf = append(*buf, '.')
-                itoa(buf, t.Nanosecond()/1e3, 6)
+                itoa(buf, l.now.Nanosecond()/1e3, 6)
             }
             *buf = append(*buf, ' ')
         }
     }
     if l.flag&(Lshortfile|Llongfile) != 0 {
+        // XXX Is this transformation idempotent?
         if l.flag&Lshortfile != 0 {
-            short := file
-            for i := len(file) - 1; i > 0; i-- {
-                if file[i] == '/' {
-                    short = file[i+1:]
+            short := l.callerFile
+            for i := len(l.callerFile) - 1; i > 0; i-- {
+                if l.callerFile[i] == '/' {
+                    short = l.callerFile[i+1:]
                     break
                 }
             }
-            file = short
+            l.callerFile = short
         }
-        *buf = append(*buf, file...)
+        *buf = append(*buf, l.callerFile...)
         *buf = append(*buf, ':')
-        itoa(buf, line, -1)
+        itoa(buf, l.callerLine, -1)
         *buf = append(*buf, ": "...)
     }
 }
@@ -233,9 +240,10 @@ func updateTempOutput(out io.Writer) {
 // provided for generality, although at the moment on all pre-defined
 // paths it will be 2.
 func (l *Logger) Output(calldepth int, s string) error {
-    now := time.Now() // get this early.
-    var file string
-    var line int
+    l.now = time.Now() // get this early.
+    if l.flag&LUTC != 0 {
+        l.now = l.now.UTC()
+    }
     mutex.Lock()
     defer mutex.Unlock()
     l.buf = append(l.buf, s...)
@@ -247,24 +255,64 @@ func (l *Logger) Output(calldepth int, s string) error {
         }
         currLine = l.buf[:index]
         l.buf = l.buf[index+1:] // Is this super-inefficient? i.e. leaking memory?
-        l.tmp = l.tmp[:0]
         if l.flag&(Lshortfile|Llongfile) != 0 {
             // release lock while getting caller info - it's expensive.
             mutex.Unlock()
             var ok bool
-            _, file, line, ok = runtime.Caller(calldepth)
+            _, l.callerFile, l.callerLine, ok = runtime.Caller(calldepth)
             if !ok {
-                file = "???"
-                line = 0
+                l.callerFile = "???"
+                l.callerLine = 0
             }
             mutex.Lock()
         }
-        l.formatHeader(&l.tmp, now, file, line)
-        l.tmp = append(l.tmp, currLine...)
-        writeLine(l.out, l.tmp)
+        writeLine(l.out, l.getFormattedLine(currLine))
     }
     updateTempOutput(l.out)
     return nil
+}
+
+var ansiColorEscapeStart = "\033["
+var ansiColorEscapeEnd = "m"
+var ansiColorResetAll = "\033[0m"
+
+var ansiColorCodes = map[string]int{
+    "r":       0,
+    "reset":   0,
+    "bright":  1,
+    "dim":     2,
+    "grey":    30,
+    "red":     31,
+    "green":   32,
+    "yellow":  33,
+    "blue":    34,
+    "magenta": 35,
+    "cyan":    36,
+    "white":   37,
+}
+func (l *Logger) getFormattedLine(line []byte) []byte {
+    l.tmp = l.tmp[:0]
+    l.formatHeader(&l.tmp)
+    l.tmp = append(l.tmp, line...)
+    colorRegexp := l.getColorRegexp()
+    if colorRegexp != nil {
+        colorTemplateReplacer := func(token []byte) []byte {
+            tmp2 := []byte{}
+            groups := colorRegexp.FindSubmatch(token)
+            tmp2 = append(tmp2, ansiColorEscapeStart...)
+            colorCode, ok := ansiColorCodes[string(groups[1])]
+            if !ok { colorCode = 0 } // XXX error message??
+            tmp2 = append(tmp2, fmt.Sprintf("%d", colorCode)...)
+            tmp2 = append(tmp2, ansiColorEscapeEnd...)
+            if len(groups[2]) > 0 {
+                tmp2 = append(tmp2, groups[3]...)
+                tmp2 = append(tmp2, ansiColorResetAll...)
+            }
+            return tmp2
+        }
+        l.tmp = colorRegexp.ReplaceAllFunc(l.tmp, colorTemplateReplacer)
+    }
+    return l.tmp
 }
 
 // Printf calls l.Output to print to the logger.
