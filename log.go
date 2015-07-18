@@ -19,6 +19,7 @@ import (
     "os"
     "regexp"
     "runtime"
+    "strconv"
     "sync"
     "time"
 )
@@ -62,6 +63,15 @@ const (
     LUTC                          // if Ldate or Ltime is set, use UTC rather than the local time zone
     LstdFlags     = Ldate | Ltime // initial values for the standard logger
 )
+
+type ActiveAnsiCodes struct {
+    intensity int
+    forecolor  int
+}
+
+func (codes ActiveAnsiCodes) anyActive() bool {
+    return codes.intensity != 0 || codes.forecolor != 0
+}
 
 // A Logger represents an active logging object that generates lines of
 // output to an io.Writer.  Each logging operation makes a single call to
@@ -109,7 +119,7 @@ func (l *Logger) isPartialLinesVisible() bool {
     return isTrueDefaulted(l.partialLinesVisible, defaultPartialLinesVisible)
 }
 
-func (l *Logger) getColorRegexp() *regexp.Regexp {
+func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
     if !isTrueDefaulted(l.colorTemplateEnabled, defaultColorTemplateEnabled) {
         return nil
     }
@@ -201,6 +211,9 @@ func setTempOutput(out io.Writer, buf []byte) {
     if len(buf) >= lastLen && bytes.Equal(lastBuf, buf[:lastLen]) {
         out.Write(buf[lastLen:])
     } else {
+        if getActiveAnsiCodes(lastBuf).anyActive() {
+            out.Write(ansiBytesResetAll)
+        }
         out.Write(BytesCarriageReturn)
         out.Write(buf)
         // This results in the cursor being too far to the right, but the only case in which this happens is
@@ -215,6 +228,9 @@ func setTempOutput(out io.Writer, buf []byte) {
 
 func writeLine(out io.Writer, buf []byte) {
     setTempOutput(out, buf)
+    if getActiveAnsiCodes(buf).anyActive() {
+        out.Write(ansiBytesResetAll)
+    }
     out.Write(BytesNewline)
     lastTempBufs[out] = BytesEmpty
 }
@@ -223,14 +239,103 @@ var tempLineSep = " | "
 func updateTempOutput(out io.Writer) {
     var buf []byte
     for _, logger := range loggers {
-        if logger.isPartialLinesVisible() && logger.out == out && len(logger.buf) > 0 {
-            if len(buf) > 0 {
-                buf = append(buf, tempLineSep...)
+        if logger.isPartialLinesVisible() && logger.out == out {
+            // Only include this line if it has visible text in it:
+            if len(ansiColorRegexp.ReplaceAll(logger.buf, BytesEmpty)) > 0 {
+                if len(buf) > 0 {
+                    buf = append(buf, tempLineSep...)
+                }
+                buf = append(buf, logger.getFormattedLine(logger.buf)...)
             }
-            buf = append(buf, logger.buf...)
         }
     }
     setTempOutput(out, buf)
+}
+
+func ansiEscapeBytes(colorCode int) []byte {
+    buf := []byte{}
+    buf = append(buf, ansiBytesEscapeStart...)
+    buf = append(buf, fmt.Sprintf("%d", colorCode)...)
+    buf = append(buf, ansiBytesEscapeEnd...)
+    return buf
+}
+
+const ansiCodeResetAll = 0
+const ansiCodeHighestIntensity = 2
+const ansiCodeResetForecolor = 39
+
+func getActiveAnsiCodes(buf []byte) ActiveAnsiCodes {
+    var ansiActive ActiveAnsiCodes
+    for _, groups := range ansiColorRegexp.FindAllSubmatch(buf, -1) {
+        code, _ := strconv.ParseInt(string(groups[1]), 10, 32)
+        if code == ansiCodeResetAll {
+            ansiActive.intensity = 0
+            ansiActive.forecolor = 0
+        } else if code <= ansiCodeHighestIntensity {
+            ansiActive.intensity = int(code)
+        } else if code == ansiCodeResetForecolor {
+            ansiActive.forecolor = 0
+        } else {
+            ansiActive.forecolor = int(code)
+        }
+    }
+    return ansiActive
+}
+
+var ansiColorRegexp = regexp.MustCompile("\033\\[(\\d+)m")
+
+var ansiBytesEscapeStart = "\033["
+var ansiBytesEscapeEnd = "m"
+var ansiBytesResetAll = []byte{'\033','[','0','m'}
+
+var ansiColorCodes = map[string]int{
+    "r":       0,
+    "reset":   0,
+    "bright":  1,
+    "dim":     2,
+    "grey":    30,
+    "red":     31,
+    "green":   32,
+    "yellow":  33,
+    "blue":    34,
+    "magenta": 35,
+    "cyan":    36,
+    "white":   37,
+}
+func (l *Logger) getFormattedLine(line []byte) []byte {
+    l.tmp = l.tmp[:0]
+    l.formatHeader(&l.tmp)
+    codes := getActiveAnsiCodes(l.tmp)
+    if codes.anyActive() {
+        l.tmp = append(l.tmp, ansiBytesResetAll...)
+    }
+    l.tmp = append(l.tmp, line...)
+    colorTemplateRegexp := l.getColorTemplateRegexp()
+    if colorTemplateRegexp != nil {
+        // We really want ReplaceAllSubmatchFunc, i.e.: https://github.com/golang/go/issues/5690
+        // Instead we call FindSubmatch on each match, which means that backtracking may not be
+        // used in custom Regexps (matches must also match on themselves without context).
+        colorTemplateReplacer := func(token []byte) []byte {
+            tmp2 := []byte{}
+            groups := colorTemplateRegexp.FindSubmatch(token)
+            colorCode, ok := ansiColorCodes[string(groups[1])]
+            if !ok {
+                // Don't modify the text if we don't recognize the code
+                return groups[0]
+            }
+            tmp2 = append(tmp2, ansiEscapeBytes(colorCode)...)
+            if len(groups[2]) > 0 {
+                tmp2 = append(tmp2, groups[3]...)
+                tmp2 = append(tmp2, ansiBytesResetAll...)
+            }
+            return tmp2
+        }
+        l.tmp = colorTemplateRegexp.ReplaceAllFunc(l.tmp, colorTemplateReplacer)
+    }
+    if !l.isColorEnabled() {
+        l.tmp = ansiColorRegexp.ReplaceAll(l.tmp, BytesEmpty)
+    }
+    return l.tmp
 }
 
 // Output writes the output for a logging event.  The string s contains
@@ -266,53 +371,18 @@ func (l *Logger) Output(calldepth int, s string) error {
             }
             mutex.Lock()
         }
+        ansiActive := getActiveAnsiCodes(currLine)
         writeLine(l.out, l.getFormattedLine(currLine))
+        // XXX This is probably inefficient?:
+        if ansiActive.intensity != 0 {
+            l.buf = append(ansiEscapeBytes(ansiActive.intensity), l.buf...)
+        }
+        if ansiActive.forecolor != 0 {
+            l.buf = append(ansiEscapeBytes(ansiActive.forecolor), l.buf...)
+        }
     }
     updateTempOutput(l.out)
     return nil
-}
-
-var ansiColorEscapeStart = "\033["
-var ansiColorEscapeEnd = "m"
-var ansiColorResetAll = "\033[0m"
-
-var ansiColorCodes = map[string]int{
-    "r":       0,
-    "reset":   0,
-    "bright":  1,
-    "dim":     2,
-    "grey":    30,
-    "red":     31,
-    "green":   32,
-    "yellow":  33,
-    "blue":    34,
-    "magenta": 35,
-    "cyan":    36,
-    "white":   37,
-}
-func (l *Logger) getFormattedLine(line []byte) []byte {
-    l.tmp = l.tmp[:0]
-    l.formatHeader(&l.tmp)
-    l.tmp = append(l.tmp, line...)
-    colorRegexp := l.getColorRegexp()
-    if colorRegexp != nil {
-        colorTemplateReplacer := func(token []byte) []byte {
-            tmp2 := []byte{}
-            groups := colorRegexp.FindSubmatch(token)
-            tmp2 = append(tmp2, ansiColorEscapeStart...)
-            colorCode, ok := ansiColorCodes[string(groups[1])]
-            if !ok { colorCode = 0 } // XXX error message??
-            tmp2 = append(tmp2, fmt.Sprintf("%d", colorCode)...)
-            tmp2 = append(tmp2, ansiColorEscapeEnd...)
-            if len(groups[2]) > 0 {
-                tmp2 = append(tmp2, groups[3]...)
-                tmp2 = append(tmp2, ansiColorResetAll...)
-            }
-            return tmp2
-        }
-        l.tmp = colorRegexp.ReplaceAllFunc(l.tmp, colorTemplateReplacer)
-    }
-    return l.tmp
 }
 
 // Printf calls l.Output to print to the logger.

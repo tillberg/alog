@@ -102,12 +102,30 @@ func TestAnsiColors(t *testing.T) {
     writer.Print("Here is @[red:some red text].\n")
     assert.Equal(t, "Here is \033[31msome red text\033[0m.\n", buf.String())
     buf.Reset()
-    writer.Print("Here is some @[green]green text@[r] and @[cyan:cyan text].\n")
-    assert.Equal(t, "Here is some \033[32mgreen text\033[0m and \033[36mcyan text\033[0m.\n", buf.String())
+    writer.Print("Here is some @[green]green text@[r] and @[garbage] and @[cyan:cyan text].\n")
+    assert.Equal(t, "Here is some \033[32mgreen text\033[0m and @[garbage] and \033[36mcyan text\033[0m.\n", buf.String())
     buf.Reset()
     writer.DisableColorTemplate()
     writer.Print("Here is @[red:some red text].\n")
     assert.Equal(t, "Here is @[red:some red text].\n", buf.String())
+    buf.Reset()
+}
+
+func TestAnsiSpanningLines(t *testing.T) {
+    var buf bytes.Buffer
+    var writer = New(&buf, "\033[32m$$ ", 0)
+    defer writer.Close()
+    writer.Print("Hello, ")
+    assert.Equal(t, "\033[32m$$ \033[0mHello, ", buf.String(), "we auto-reset ansi colors after the prefix")
+    buf.Reset()
+    writer.Print("we're writing\033[31m")
+    assert.Equal(t, "we're writing\033[31m", buf.String())
+    buf.Reset()
+    writer.Print(" in red")
+    assert.Equal(t, " in red", buf.String())
+    buf.Reset()
+    writer.Print("even\nwhen we're on a new line.\n")
+    assert.Equal(t, "even\033[0m\n\033[32m$$ \033[0m\033[31mwhen we're on a new line.\033[0m\n", buf.String())
     buf.Reset()
 }
 
