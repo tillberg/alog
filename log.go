@@ -331,7 +331,8 @@ func writeLine(out io.Writer, buf []byte) {
 }
 
 var tempLineSep = []byte(" | ")
-var tempLineEllipsis = []byte(" ...")
+var tempLineEllipsis = []byte("...")
+const minTempSegmentLength = 6
 func updateTempOutput(out io.Writer) {
     maxWidth := getTermWidth(out) - 1
     var bufs [][]byte
@@ -343,11 +344,54 @@ func updateTempOutput(out io.Writer) {
             }
         }
     }
-    buf := bytes.Join(bufs, tempLineSep)
-    if len(buf) > maxWidth {
-        buf = append(buf[:maxWidth - len(tempLineEllipsis)], tempLineEllipsis...)
+    numBufs := len(bufs)
+    lengths := make([]int, 0)
+    lengthSum := 0
+    for _, buf := range bufs {
+        length := len(uncolorize(buf))
+        lengths = append(lengths, length)
+        lengthSum += length
     }
-    setTempOutput(out, buf)
+    charsLeft := maxWidth - stringLen(tempLineSep) * (numBufs - 1)
+    var outputBuf []byte
+    if len(bufs) > 1 {
+        if charsLeft < lengthSum {
+            ellipsisLength := stringLen(tempLineEllipsis)
+            shortenedLengths := make([]int, numBufs)
+            copy(shortenedLengths, lengths)
+            for charsLeft < lengthSum {
+                longestIndex := 0
+                longestLength := 0
+                for i, length := range shortenedLengths {
+                    if length > longestLength {
+                        longestIndex = i
+                        longestLength = length
+                    }
+                }
+                if longestLength < minTempSegmentLength {
+                    // Don't bother making segments shorter than this
+                    break
+                }
+                if longestLength == lengths[longestIndex] {
+                    // It's at max length; we need to lop off space for the ellipsis
+                    shortenedLengths[longestIndex] -= ellipsisLength + 1
+                } else {
+                    shortenedLengths[longestIndex] -= 1
+                }
+                lengthSum -= 1
+            }
+            var bufs2 [][]byte
+            for i, buf := range bufs {
+                bufs2 = append(bufs2, trimString(buf, shortenedLengths[i]))
+            }
+            bufs = bufs2
+        }
+    }
+    outputBuf = bytes.Join(bufs, tempLineSep)
+    if stringLen(outputBuf) > maxWidth {
+        outputBuf = append(trimString(outputBuf, maxWidth - stringLen(tempLineEllipsis)), tempLineEllipsis...)
+    }
+    setTempOutput(out, outputBuf)
 }
 
 func ansiEscapeBytes(colorCode int) []byte {
@@ -358,8 +402,36 @@ func ansiEscapeBytes(colorCode int) []byte {
     return buf
 }
 
+func uncolorize(buf []byte) []byte {
+    return ansiColorRegexp.ReplaceAll(buf, bytesEmpty)
+}
+
+func trimString(buf []byte, length int) []byte {
+    if length == 0 {
+        return bytesEmpty
+    }
+    tmp := []byte{}
+    for _, groups := range ansiColorOrCharRegexp.FindAllSubmatch(buf, -1) {
+        tmp = append(tmp, groups[0]...)
+        if len(groups[1]) == 0 {
+            // This match was not an ANSI escape, so count it towards the length
+            length -= 1
+            if length <= 0 {
+                return tmp
+            }
+        }
+    }
+    return tmp
+}
+
+func stringLen(buf []byte) int {
+    // This is not rune-aware
+    return len(uncolorize(buf))
+}
+
 var bytesComma = []byte(",")
 var ansiColorRegexp = regexp.MustCompile("\033\\[(\\d+)m")
+var ansiColorOrCharRegexp = regexp.MustCompile("(\033\\[\\d+m)|.")
 var ansiBytesEscapeStart = []byte("\033[")
 var ansiBytesEscapeEnd = []byte("m")
 var ansiBytesResetAll = []byte("\033[0m")
@@ -371,7 +443,7 @@ func (l *Logger) getFormattedLine(line []byte) []byte {
     l.tmp = append(l.tmp, codes.getResetBytes()...)
     l.tmp = append(l.tmp, line...)
     if !l.isColorEnabled() {
-        l.tmp = ansiColorRegexp.ReplaceAll(l.tmp, bytesEmpty)
+        l.tmp = uncolorize(l.tmp)
     }
     return l.tmp
 }
@@ -593,7 +665,7 @@ func (l *Logger) SetColorTemplateRegexp(rgx *regexp.Regexp) {
     l.colorRegexp = rgx
 }
 
-func (l *Logger) SetTermWidth(width int) {
+func (l *Logger) SetTerminalWidth(width int) {
     mutex.Lock()
     defer mutex.Unlock()
     getWriterState(l.out).termWidth = width
@@ -700,7 +772,7 @@ func DisableColor() { std.DisableColor() }
 func EnableColorTemplate() { std.EnableColorTemplate() }
 func DisableColorTemplate() { std.DisableColorTemplate() }
 func SetColorTemplateRegexp(rgx *regexp.Regexp) { std.SetColorTemplateRegexp(rgx) }
-func SetTermWidth(width int) { std.SetTermWidth(width) }
+func SetTerminalWidth(width int) { std.SetTerminalWidth(width) }
 
 func AddAnsiCode(s string, code int) {
     ansiColorCodes[s] = code
