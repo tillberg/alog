@@ -124,8 +124,12 @@ func TestAnsiSpanningLines(t *testing.T) {
     writer.Print(" in red")
     assert.Equal(t, " in red", buf.String())
     buf.Reset()
-    writer.Print("even\nwhen we're on a new line.\n")
+    writer.Print("even\nwhen we're on a new line.\033[0m\n")
     assert.Equal(t, "even\033[0m\n\033[32m$$ \033[0m\033[31mwhen we're on a new line.\033[0m\n", buf.String())
+    buf.Reset()
+    writer.EnableColorTemplate()
+    writer.Print("@[blue:templated\nnewlines\ntoo].\n")
+    assert.Equal(t, "\033[32m$$ \033[0m\033[34mtemplated\033[0m\n\033[32m$$ \033[0m\033[34mnewlines\033[0m\n\033[32m$$ \033[0m\033[34mtoo\033[0m.\n", buf.String())
     buf.Reset()
 }
 
@@ -135,4 +139,3 @@ func TestAnsiSpanningLines(t *testing.T) {
 // - Set custom ANSI color escape characters or custom regexp
 // - Set custom ANSI regexp etc globally
 // - Pair multiple ANSI escapes in a span, e.g. @[green,dim:this is dim-green text]
-// - Handle ANSI colors (and templates) across newlines

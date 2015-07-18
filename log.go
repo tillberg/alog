@@ -310,6 +310,25 @@ func (l *Logger) getFormattedLine(line []byte) []byte {
         l.tmp = append(l.tmp, ansiBytesResetAll...)
     }
     l.tmp = append(l.tmp, line...)
+    if !l.isColorEnabled() {
+        l.tmp = ansiColorRegexp.ReplaceAll(l.tmp, BytesEmpty)
+    }
+    return l.tmp
+}
+
+// Output writes the output for a logging event.  The string s contains
+// the text to print after the prefix specified by the flags of the
+// Logger.  A newline is appended if the last character of s is not
+// already a newline.  Calldepth is used to recover the PC and is
+// provided for generality, although at the moment on all pre-defined
+// paths it will be 2.
+func (l *Logger) Output(calldepth int, s string) error {
+    l.now = time.Now() // get this early.
+    if l.flag&LUTC != 0 {
+        l.now = l.now.UTC()
+    }
+    mutex.Lock()
+    defer mutex.Unlock()
     colorTemplateRegexp := l.getColorTemplateRegexp()
     if colorTemplateRegexp != nil {
         // We really want ReplaceAllSubmatchFunc, i.e.: https://github.com/golang/go/issues/5690
@@ -330,28 +349,10 @@ func (l *Logger) getFormattedLine(line []byte) []byte {
             }
             return tmp2
         }
-        l.tmp = colorTemplateRegexp.ReplaceAllFunc(l.tmp, colorTemplateReplacer)
+        l.buf = append(l.buf, colorTemplateRegexp.ReplaceAllFunc([]byte(s), colorTemplateReplacer)...)
+    } else {
+        l.buf = append(l.buf, s...)
     }
-    if !l.isColorEnabled() {
-        l.tmp = ansiColorRegexp.ReplaceAll(l.tmp, BytesEmpty)
-    }
-    return l.tmp
-}
-
-// Output writes the output for a logging event.  The string s contains
-// the text to print after the prefix specified by the flags of the
-// Logger.  A newline is appended if the last character of s is not
-// already a newline.  Calldepth is used to recover the PC and is
-// provided for generality, although at the moment on all pre-defined
-// paths it will be 2.
-func (l *Logger) Output(calldepth int, s string) error {
-    l.now = time.Now() // get this early.
-    if l.flag&LUTC != 0 {
-        l.now = l.now.UTC()
-    }
-    mutex.Lock()
-    defer mutex.Unlock()
-    l.buf = append(l.buf, s...)
     var currLine []byte
     for true {
         var index = bytes.IndexByte(l.buf, '\n')
