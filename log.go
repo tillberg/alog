@@ -71,8 +71,10 @@ var ansiColorCodes = map[string]int{
 }
 
 type WriterState struct {
-    lastTempBuf []byte
-    termWidth int
+    lastTempBuf    [][]byte
+    termWidth      int
+    multiline      bool
+    cursorIsInline bool
 }
 
 // ensures atomic writes; shared by all Logger instances
@@ -84,6 +86,8 @@ func getWriterState(writer io.Writer) *WriterState {
     writerState, ok := writers[writer]
     if !ok {
         writerState = &WriterState{}
+        writerState.cursorIsInline = true
+        writerState.lastTempBuf = [][]byte{[]byte{}}
         writers[writer] = writerState
     }
     return writerState
@@ -313,15 +317,17 @@ var bytesCarriageReturn = []byte("\r")
 var bytesNewline = []byte("\n")
 var bytesSpace = []byte(" ")
 
-func setTempOutput(out io.Writer, buf []byte) {
+func setTempLineOutput(out io.Writer, line int, buf []byte) {
     writerState := getWriterState(out)
-    var lastBuf = writerState.lastTempBuf
+    numTempLines := len(writerState.lastTempBuf)
+    var lastBuf = writerState.lastTempBuf[line]
     // These lengths are actually fine being in bytes
     var lastLen = len(lastBuf)
     var currLen = len(buf)
-    if currLen >= lastLen && bytes.Equal(lastBuf, buf[:lastLen]) {
+    if writerState.cursorIsInline && numTempLines == line + 1 && currLen >= lastLen && bytes.Equal(lastBuf, buf[:lastLen]) {
         out.Write(buf[lastLen:])
     } else {
+        // XXX if line != numTempLines - 1, we need to move up to it, write contents, then move back down
         out.Write(getActiveAnsiCodes(lastBuf).getResetBytes())
         out.Write(bytesCarriageReturn)
         out.Write(buf)
@@ -333,14 +339,19 @@ func setTempOutput(out io.Writer, buf []byte) {
             out.Write(bytesSpace)
         }
     }
-    writerState.lastTempBuf = buf
+    writerState.lastTempBuf[line] = buf
 }
 
 func writeLine(out io.Writer, buf []byte) {
-    setTempOutput(out, buf)
+    setTempLineOutput(out, 0, buf)
     out.Write(getActiveAnsiCodes(buf).getResetBytes())
     out.Write(bytesNewline)
-    writers[out].lastTempBuf = bytesEmpty
+    writerState := getWriterState(out)
+    if writerState.multiline {
+        writerState.lastTempBuf = writerState.lastTempBuf[1:]
+    } else {
+        writerState.lastTempBuf[0] = bytesEmpty
+    }
 }
 
 var tempLineSep = []byte(" | ")
@@ -357,6 +368,7 @@ func updateTempOutput(out io.Writer) {
             }
         }
     }
+    // XXX if multiline, we do an entirely different (and simpler) algorithm here
     numBufs := len(bufs)
     lengths := make([]int, 0)
     lengthSum := 0
@@ -407,7 +419,7 @@ func updateTempOutput(out io.Writer) {
     if stringLen(outputBuf) > maxWidth {
         outputBuf = append(trimString(outputBuf, maxWidth - stringLen(tempLineEllipsis)), tempLineEllipsis...)
     }
-    setTempOutput(out, outputBuf)
+    setTempLineOutput(out, 0, outputBuf)
 }
 
 func ansiEscapeBytes(colorCode int) []byte {
@@ -760,6 +772,17 @@ func (l *Logger) SetTerminalWidth(width int) {
     mutex.Lock()
     defer mutex.Unlock()
     getWriterState(l.out).termWidth = width
+}
+
+func (l *Logger) UseMultilineMode() {
+    mutex.Lock()
+    defer mutex.Unlock()
+    getWriterState(l.out).multiline = true
+}
+func (l *Logger) UseSinglelineMode() {
+    mutex.Lock()
+    defer mutex.Unlock()
+    getWriterState(l.out).multiline = false
 }
 
 // func (l *Logger) SetColorTemplate(str string) {
