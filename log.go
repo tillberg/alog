@@ -490,6 +490,17 @@ func processColorTemplates(colorTemplateRegexp *regexp.Regexp, buf []byte) []byt
     return colorTemplateRegexp.ReplaceAllFunc(buf, colorTemplateReplacer)
 }
 
+func (l *Logger) applyColorTemplates(s string) string {
+    mutex.Lock()
+    colorTemplateRegexp := l.getColorTemplateRegexp()
+    mutex.Unlock()
+    if colorTemplateRegexp != nil {
+        return string(processColorTemplates(colorTemplateRegexp, []byte(s)))
+    } else {
+        return s
+    }
+}
+
 // Output writes the output for a logging event.  The string s contains
 // the text to print after the prefix specified by the flags of the
 // Logger.  A newline is appended if the last character of s is not
@@ -503,13 +514,9 @@ func (l *Logger) Output(calldepth int, s string) error {
     }
     mutex.Lock()
     defer mutex.Unlock()
-    colorTemplateRegexp := l.getColorTemplateRegexp()
-    if colorTemplateRegexp != nil {
-        l.buf = append(l.buf, processColorTemplates(colorTemplateRegexp, []byte(s))...)
-    } else {
-        l.buf = append(l.buf, s...)
-    }
+    l.buf = append(l.buf, s...)
     var currLine []byte
+    wroteFullLine := false
     for true {
         var index = bytes.IndexByte(l.buf, '\n')
         if index == -1 {
@@ -517,7 +524,7 @@ func (l *Logger) Output(calldepth int, s string) error {
         }
         currLine = l.buf[:index]
         l.buf = l.buf[index+1:] // Is this super-inefficient? i.e. leaking memory?
-        if l.flag&(Lshortfile|Llongfile) != 0 {
+        if l.flag&(Lshortfile|Llongfile) != 0 && len(l.callerFile) == 0 {
             // release lock while getting caller info - it's expensive.
             mutex.Unlock()
             var ok bool
@@ -530,6 +537,7 @@ func (l *Logger) Output(calldepth int, s string) error {
         }
         ansiActive := getActiveAnsiCodes(currLine)
         writeLine(l.out, l.getFormattedLine(currLine))
+        wroteFullLine = true
         // XXX This is probably inefficient?:
         if ansiActive.intensity != 0 {
             l.buf = append(ansiEscapeBytes(ansiActive.intensity), l.buf...)
@@ -538,6 +546,10 @@ func (l *Logger) Output(calldepth int, s string) error {
             l.buf = append(ansiEscapeBytes(ansiActive.forecolor), l.buf...)
         }
     }
+    if (wroteFullLine) {
+        l.callerFile = ""
+        l.callerLine = 0
+    }
     updateTempOutput(l.out)
     return nil
 }
@@ -545,52 +557,52 @@ func (l *Logger) Output(calldepth int, s string) error {
 // Printf calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Printf.
 func (l *Logger) Printf(format string, v ...interface{}) {
-    l.Output(2, fmt.Sprintf(format, v...))
+    l.Output(2, fmt.Sprintf(l.applyColorTemplates(format), v...))
 }
 
 // Print calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Print.
-func (l *Logger) Print(v ...interface{}) { l.Output(2, fmt.Sprint(v...)) }
+func (l *Logger) Print(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprint(v...))) }
 
 // Println calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Println.
-func (l *Logger) Println(v ...interface{}) { l.Output(2, fmt.Sprintln(v...)) }
+func (l *Logger) Println(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprintln(v...))) }
 
 // Fatal is equivalent to l.Print() followed by a call to os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
-    l.Output(2, fmt.Sprint(v...))
+    l.Output(2, l.applyColorTemplates(fmt.Sprint(v...)))
     os.Exit(1)
 }
 
 // Fatalf is equivalent to l.Printf() followed by a call to os.Exit(1).
 func (l *Logger) Fatalf(format string, v ...interface{}) {
-    l.Output(2, fmt.Sprintf(format, v...))
+    l.Output(2, fmt.Sprintf(l.applyColorTemplates(format), v...))
     os.Exit(1)
 }
 
 // Fatalln is equivalent to l.Println() followed by a call to os.Exit(1).
 func (l *Logger) Fatalln(v ...interface{}) {
-    l.Output(2, fmt.Sprintln(v...))
+    l.Output(2, l.applyColorTemplates(fmt.Sprintln(v...)))
     os.Exit(1)
 }
 
 // Panic is equivalent to l.Print() followed by a call to panic().
 func (l *Logger) Panic(v ...interface{}) {
-    s := fmt.Sprint(v...)
+    s := l.applyColorTemplates(fmt.Sprint(v...))
     l.Output(2, s)
     panic(s)
 }
 
 // Panicf is equivalent to l.Printf() followed by a call to panic().
 func (l *Logger) Panicf(format string, v ...interface{}) {
-    s := fmt.Sprintf(format, v...)
+    s := fmt.Sprintf(l.applyColorTemplates(format), v...)
     l.Output(2, s)
     panic(s)
 }
 
 // Panicln is equivalent to l.Println() followed by a call to panic().
 func (l *Logger) Panicln(v ...interface{}) {
-    s := fmt.Sprintln(v...)
+    s := l.applyColorTemplates(fmt.Sprintln(v...))
     l.Output(2, s)
     panic(s)
 }
@@ -718,56 +730,56 @@ func SetPrefix(prefix string) {
 // Print calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Print.
 func Print(v ...interface{}) {
-    std.Output(2, fmt.Sprint(v...))
+    std.Output(2, std.applyColorTemplates(fmt.Sprint(v...)))
 }
 
 // Printf calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Printf.
 func Printf(format string, v ...interface{}) {
-    std.Output(2, fmt.Sprintf(format, v...))
+    std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
 }
 
 // Println calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Println.
 func Println(v ...interface{}) {
-    std.Output(2, fmt.Sprintln(v...))
+    std.Output(2, std.applyColorTemplates(fmt.Sprintln(v...)))
 }
 
 // Fatal is equivalent to Print() followed by a call to os.Exit(1).
 func Fatal(v ...interface{}) {
-    std.Output(2, fmt.Sprint(v...))
+    std.Output(2, std.applyColorTemplates(fmt.Sprint(v...)))
     os.Exit(1)
 }
 
 // Fatalf is equivalent to Printf() followed by a call to os.Exit(1).
 func Fatalf(format string, v ...interface{}) {
-    std.Output(2, fmt.Sprintf(format, v...))
+    std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
     os.Exit(1)
 }
 
 // Fatalln is equivalent to Println() followed by a call to os.Exit(1).
 func Fatalln(v ...interface{}) {
-    std.Output(2, fmt.Sprintln(v...))
+    std.Output(2, std.applyColorTemplates(fmt.Sprintln(v...)))
     os.Exit(1)
 }
 
 // Panic is equivalent to Print() followed by a call to panic().
 func Panic(v ...interface{}) {
-    s := fmt.Sprint(v...)
+    s := std.applyColorTemplates(fmt.Sprint(v...))
     std.Output(2, s)
     panic(s)
 }
 
 // Panicf is equivalent to Printf() followed by a call to panic().
 func Panicf(format string, v ...interface{}) {
-    s := fmt.Sprintf(format, v...)
+    s := fmt.Sprintf(std.applyColorTemplates(format), v...)
     std.Output(2, s)
     panic(s)
 }
 
 // Panicln is equivalent to Println() followed by a call to panic().
 func Panicln(v ...interface{}) {
-    s := fmt.Sprintln(v...)
+    s := std.applyColorTemplates(fmt.Sprintln(v...))
     std.Output(2, s)
     panic(s)
 }

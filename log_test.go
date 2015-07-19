@@ -2,6 +2,7 @@ package log
 
 import (
     "bytes"
+    "os"
     "testing"
     "github.com/stretchr/testify/assert"
 )
@@ -211,8 +212,6 @@ func TestTermWidthTruncation(t *testing.T) {
 func TestNonLatinRunes(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
-    AddAnsiCode("awesome", 1)
-    AddAnsiCode("sauce", 36)
     var writer = New(&buf, "我能吞下玻璃而不伤身体。", 0)
     writer.Print("أنا قادر على أكل الزجاج و هذا")
     assert.Equal("我能吞下玻璃而不伤身体。أنا قادر على أكل الزجاج و هذا", buf.String())
@@ -226,8 +225,26 @@ func TestNonLatinRunes(t *testing.T) {
     assert.Equal("我能吞下玻璃而不伤身体。ನನಗೆ...", buf.String())
 }
 
+func TestApplyTemplateEarly(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer = New(&buf, "", 0)
+    writer.EnableColorTemplate()
+    writer.Printf("@[red:%s]\n", "@[green:this is not green]")
+    assert.Equal("\033[31m@[green:this is not green]\033[39m\n", buf.String())
+    buf.Reset()
+    SetOutput(&buf)
+    SetFlags(0)
+    EnableColorTemplate()
+    defer SetOutput(os.Stderr)
+    defer SetFlags(LstdFlags)
+    defer DisableColorTemplate()
+    Printf("@[red:%s]\n", "@[green:this is not green]")
+    assert.Equal("\033[31m@[green:this is not green]\033[39m\n", buf.String())
+    buf.Reset()
+}
+
 // TODO test &/or implement:
-// - Apply color templates in e.g. Printf instead of in Output so that we can do e.g. Printf("@[red:%s]", "@[green:this is not green]")
 // - Process carriage returns correctly
 // - Set custom ANSI color escape characters or custom regexp
 // - Set custom ANSI regexp etc globally
