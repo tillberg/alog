@@ -176,6 +176,7 @@ type Logger struct {
     buf    []byte     // for accumulating text to write
     tmp    []byte     // for formatting the current line
     prefixFormatted      []byte
+    cursorByteIndex      int
     partialLinesVisible  *bool
     colorEnabled         *bool
     colorTemplateEnabled *bool
@@ -509,6 +510,49 @@ func (l *Logger) applyColorTemplates(s string) string {
     }
 }
 
+func (l *Logger) injectAtCursor(input []byte) {
+    if len(l.buf) != l.cursorByteIndex {
+        // Append s to l.buf[:cursorByteIndex], consuming l.buf[cursorByteIndex:] with
+        // each rune, but also injecting ansi escapes at the new old/new transition
+        // column to keep the colors consistent.
+        before := l.buf[:l.cursorByteIndex]
+        after := l.buf[l.cursorByteIndex:]
+        afterLength := stringLen(after)
+        inputLength := stringLen(input)
+        if inputLength >= afterLength {
+            // We're removing all the after text, so no need to compare colors
+            // and/or inject any escapes to heal the after text.
+            l.buf = append(before, input...)
+            l.cursorByteIndex += len(input)
+        } else {
+            removed := trimString(after, inputLength)
+            ansiOld := getActiveAnsiCodes(append(before, removed...))
+            ansiNew := getActiveAnsiCodes(append(before, input...))
+            escapes := []byte{}
+            changedIntensity := ansiNew.intensity != ansiOld.intensity
+            changedForecolor := ansiNew.forecolor != ansiOld.forecolor
+            if changedIntensity {
+                escapes = append(escapes, ansiBytesResetAll...)
+            } else if changedForecolor {
+                escapes = append(escapes, ansiBytesResetForecolor...)
+            }
+            if changedIntensity && ansiOld.intensity != 0 {
+                escapes = append(escapes, ansiEscapeBytes(ansiOld.intensity)...)
+            }
+            if (changedIntensity || changedForecolor) && ansiOld.forecolor != 0 {
+                escapes = append(escapes, ansiEscapeBytes(ansiOld.forecolor)...)
+            }
+            afterKept := append(escapes, after[len(removed):]...)
+            l.buf = append(before, input...)
+            l.cursorByteIndex += len(input)
+            l.buf = append(l.buf, afterKept...) // Don't advance cursor for this part
+        }
+    } else {
+        l.buf = append(l.buf, input...)
+        l.cursorByteIndex += len(input)
+    }
+}
+
 // Output writes the output for a logging event.  The string s contains
 // the text to print after the prefix specified by the flags of the
 // Logger.  A newline is appended if the last character of s is not
@@ -522,16 +566,31 @@ func (l *Logger) Output(calldepth int, s string) error {
     }
     mutex.Lock()
     defer mutex.Unlock()
-    l.buf = append(l.buf, s...)
-    var currLine []byte
+    l.injectAtCursor([]byte(s))
     wroteFullLine := false
     for true {
-        var index = bytes.IndexByte(l.buf, '\n')
-        if index == -1 {
+        indexNewline := bytes.IndexByte(l.buf, '\n')
+        var currLine []byte
+        if indexNewline == -1 {
+            currLine = l.buf
+        } else {
+            currLine = l.buf[:indexNewline]
+        }
+        indexCr := bytes.IndexByte(currLine, '\r')
+        if indexCr != -1 {
+            // For every carriage return found within the current line, detach the text
+            // after the carriage return and inject at the beginning of the line.
+            after := l.buf[indexCr+1:]
+            l.buf = l.buf[:indexCr]
+            l.cursorByteIndex = 0
+            l.injectAtCursor(after)
+            continue
+        }
+        if indexNewline == -1 {
             break
         }
-        currLine = l.buf[:index]
-        l.buf = l.buf[index+1:] // Is this super-inefficient? i.e. leaking memory?
+        l.buf = l.buf[indexNewline+1:] // Is this super-inefficient? i.e. leaking memory?
+        l.cursorByteIndex -= indexNewline + 1
         if l.flag&(Lshortfile|Llongfile) != 0 && len(l.callerFile) == 0 {
             // release lock while getting caller info - it's expensive.
             mutex.Unlock()
@@ -547,11 +606,16 @@ func (l *Logger) Output(calldepth int, s string) error {
         writeLine(l.out, l.getFormattedLine(currLine))
         wroteFullLine = true
         // XXX This is probably inefficient?:
+        prepends := []byte{}
         if ansiActive.intensity != 0 {
-            l.buf = append(ansiEscapeBytes(ansiActive.intensity), l.buf...)
+            prepends = append(prepends, ansiEscapeBytes(ansiActive.intensity)...)
         }
         if ansiActive.forecolor != 0 {
-            l.buf = append(ansiEscapeBytes(ansiActive.forecolor), l.buf...)
+            prepends = append(prepends, ansiEscapeBytes(ansiActive.forecolor)...)
+        }
+        if len(prepends) > 0 {
+            l.buf = append(prepends, l.buf...)
+            l.cursorByteIndex += len(prepends)
         }
     }
     if (wroteFullLine) {

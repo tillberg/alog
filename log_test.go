@@ -179,6 +179,7 @@ func TestAddColorCode(t *testing.T) {
     AddAnsiCode("awesome", 1)
     AddAnsiCode("sauce", 36)
     var writer = New(&buf, "@[awesome,sauce:$$] ", 0)
+    defer writer.Close()
     writer.EnableColorTemplate()
     writer.Print("@[sauce,awesome]text@[r]\n")
     assert.Equal("\033[1m\033[36m$$\033[0m \033[36m\033[1mtext\033[0m\n", buf.String())
@@ -194,8 +195,10 @@ func TestTermWidthTruncation(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
     var writer1 = New(&buf, "@[green]$$ ", 0)
+    defer writer1.Close()
     writer1.EnableColorTemplate()
     var writer2 = New(&buf, "@[red]$$ ", 0)
+    defer writer2.Close()
     writer2.EnableColorTemplate()
     writer1.SetTerminalWidth(30) // Applies to both because they both write to buf
     writer1.Print("@[yellow]𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸𐌸")
@@ -213,6 +216,7 @@ func TestNonLatinRunes(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
     var writer = New(&buf, "我能吞下玻璃而不伤身体。", 0)
+    defer writer.Close()
     writer.Print("أنا قادر على أكل الزجاج و هذا")
     assert.Equal("我能吞下玻璃而不伤身体。أنا قادر على أكل الزجاج و هذا", buf.String())
     buf.Reset()
@@ -229,6 +233,7 @@ func TestApplyTemplateEarly(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
     var writer = New(&buf, "", 0)
+    defer writer.Close()
     writer.EnableColorTemplate()
     writer.Printf("@[red:%s]\n", "@[green:this is not green]")
     assert.Equal("\033[31m@[green:this is not green]\033[39m\n", buf.String())
@@ -244,10 +249,36 @@ func TestApplyTemplateEarly(t *testing.T) {
     buf.Reset()
 }
 
+func TestCarriageReturns(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer1 = New(&buf, "", 0)
+    defer writer1.Close()
+    writer1.Print("Working...")
+    assert.Equal("Working...", buf.String())
+    buf.Reset()
+    var writer2 = New(&buf, "", 0)
+    defer writer2.Close()
+    writer2.EnableColorTemplate()
+    writer2.Print("Progress: @[red:  0] percent.")
+    assert.Equal(" | Progress: \033[31m  0\033[39m percent.", buf.String())
+    buf.Reset()
+    writer2.Print("\rProgress: @[red:  1] percent.")
+    assert.Equal("\rWorking... | Progress: \033[31m  1\033[39m percent.", buf.String())
+    buf.Reset()
+    writer2.Print("\rProgress: @[red:  2] percent.\r")
+    assert.Equal("\rWorking... | Progress: \033[31m  2\033[39m percent.", buf.String())
+    buf.Reset()
+    writer2.Print("Progress: @[red: 33] percent.")
+    assert.Equal("\rWorking... | Progress: \033[31m 33\033[39m percent.", buf.String())
+    buf.Reset()
+    writer2.Print("\rProgress: @[blue] 6")
+    assert.Equal("\rWorking... | Progress: \033[34m 6\033[39m\033[31m3\033[39m percent.", buf.String())
+    buf.Reset()
+}
+
 // TODO test &/or implement:
-// - Process carriage returns correctly
-// - Set custom ANSI color escape characters or custom regexp
-// - Set custom ANSI regexp etc globally
+// - Set custom ANSI template regexp specifically or globally
 // - Add option to auto-append newlines with each Print/Printf for stock `log` compatibility
 // - Add duration output flag? "(37.2 secs) Downloading stuff... done."
 // - Experiment with multiple lines of temp output? Probably doesn't work.
