@@ -1,3 +1,11 @@
+// This was created based on log/log.go from the Go source, imported originally from
+// https://github.com/golang/go/blob/692054e76e7686c6d5de385df69873e6427a35fb/src/log/log.go
+
+// Portions Copyright 2015 Dan Tillberg. Those portions
+// are licensed for use according to the ISC License.
+
+// The original copyright notice is below:
+
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
