@@ -796,6 +796,23 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 // Arguments are handled in the manner of fmt.Print.
 func (l *Logger) Print(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprint(v...))) }
 
+func (l *Logger) truncateBuf() {
+    mutex.Lock()
+    l.buf = l.buf[:0]
+    l.cursorByteIndex = 0
+    mutex.Unlock()
+}
+
+func (l *Logger) Replacef(format string, v ...interface{}) {
+    l.truncateBuf()
+    l.Output(2, fmt.Sprintf(l.applyColorTemplates(format), v...))
+}
+
+func (l *Logger) Replace(v ...interface{}) {
+    l.truncateBuf()
+    l.Output(2, l.applyColorTemplates(fmt.Sprint(v...)))
+}
+
 // Println calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Println.
 func (l *Logger) Println(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprintln(v...))) }
@@ -981,6 +998,16 @@ func Print(v ...interface{}) {
 // Printf calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Printf.
 func Printf(format string, v ...interface{}) {
+    std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
+}
+
+func Replace(v ...interface{}) {
+    std.truncateBuf()
+    std.Output(2, std.applyColorTemplates(fmt.Sprint(v...)))
+}
+
+func Replacef(format string, v ...interface{}) {
+    std.truncateBuf()
     std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
 }
 

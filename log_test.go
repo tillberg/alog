@@ -280,6 +280,28 @@ func TestCarriageReturns(t *testing.T) {
     buf.Reset()
 }
 
+func TestReplace(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer = New(&buf, "", 0)
+    defer writer.Close()
+    writer.Replace("Hello Susan.")
+    assert.Equal("Hello Susan.", buf.String())
+    buf.Reset()
+    writer.Replace("Hello Bob.")
+    assert.Equal("\rHello Bob.  ", buf.String())
+    buf.Reset()
+    writer.Replacef("Hello %s.", "Al")
+    assert.Equal("\rHello Al. ", buf.String())
+    buf.Reset()
+    writer.Replacef("Hello %s", "Ala")
+    assert.Equal("\rHello Ala", buf.String())
+    buf.Reset()
+    writer.Replace("Hello Alan.")
+    assert.Equal("n.", buf.String())
+    buf.Reset()
+}
+
 func TestMultilineMode(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
