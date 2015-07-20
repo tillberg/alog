@@ -299,14 +299,14 @@ func TestMultilineMode(t *testing.T) {
     writer1.Print("  50 percent finished...")
     assert.Equal("  50 percent finished...", buf.String())
     buf.Reset()
-    writer2.Print("working... ")
+    writer2.Print(" working... ")
     assert.Equal("\033[1Ewriter2... working... ", buf.String())
     buf.Reset()
     writer2.Print("done.\n")
     // Need to move up to the previous line, overwrite writer1's text, then only move down a line.
     // A newline is not necessary since we're only *completing* an existing line and not yet starting
     // a new line.
-    assert.Equal("\033[1Fwriter2... working... done.                   \033[1Ewriter1... working...  50 percent finished...", buf.String())
+    assert.Equal("\033[1Fwriter2... working... done.                  \033[1Ewriter1... working...  50 percent finished...", buf.String())
     buf.Reset()
     writer2.Print("working again...")
     assert.Equal("\nworking again...", buf.String())
@@ -322,5 +322,4 @@ func TestMultilineMode(t *testing.T) {
 // - Set custom ANSI template regexp specifically or globally
 // - Add option to auto-append newlines with each Print/Printf for stock `log` compatibility
 // - Add duration output flag? "(37.2 secs) Downloading stuff... done."
-// - Experiment with multiple lines of temp output? Probably doesn't work.
 // - Test & implement proper bookkeeping around SetOutput and tempLoggers

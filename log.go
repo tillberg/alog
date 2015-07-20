@@ -82,6 +82,7 @@ type WriterState struct {
     multiline       bool
     cursorLineIndex int
     cursorIsInline  bool
+    cursorIsAtBegin bool
 }
 
 func (w *WriterState) removeTempLogger(l *Logger) {
@@ -342,31 +343,44 @@ var bytesEmpty = []byte("")
 var bytesCarriageReturn = []byte("\r")
 var bytesNewline = []byte("\n")
 var bytesSpace = []byte(" ")
-var bytesMoveCursorPrevLine = []byte("\033[1F")
-var bytesMoveCursorNextLine = []byte("\033[1E")
+var bytesMoveCursorPrevLines = []byte("F")
+var bytesMoveCursorNextLines = []byte("E")
+
+func moveCursorToLine(out io.Writer, line int) bool {
+    writerState := getWriterState(out)
+    if line == writerState.cursorLineIndex {
+        return false
+    }
+    tmp := ansiBytesEscapeStart
+    if line < writerState.cursorLineIndex {
+        tmp = append(tmp, fmt.Sprintf("%d", writerState.cursorLineIndex - line)...)
+        tmp = append(tmp, bytesMoveCursorPrevLines...)
+    } else {
+        tmp = append(tmp, fmt.Sprintf("%d", line - writerState.cursorLineIndex)...)
+        tmp = append(tmp, bytesMoveCursorNextLines...)
+    }
+    out.Write(tmp)
+    writerState.cursorLineIndex = line
+    writerState.cursorIsAtBegin = true
+    return true
+}
 
 func setTempLineOutput(out io.Writer, line int, buf []byte) {
     writerState := getWriterState(out)
-    numLines := len(writerState.lastTemp) // This must be the same as len(bufs)
-    lastLineIndex := numLines - 1
-    linesFromLast := lastLineIndex - line
-    isLastLine := linesFromLast == 0
+    cursorIsOnlineAndInline := writerState.cursorLineIndex == line && writerState.cursorIsInline
     lastBuf := writerState.lastTemp[line]
     // These lengths are actually fine being in bytes
     lastLen := len(lastBuf)
     currLen := len(buf)
-    if (isLastLine && writerState.cursorIsInline) && (currLen >= lastLen && bytes.Equal(lastBuf, buf[:lastLen])) {
+    if currLen == lastLen && bytes.Equal(lastBuf, buf) {
+        // Don't need to do anything
+        return
+    } else if cursorIsOnlineAndInline && (currLen >= lastLen && bytes.Equal(lastBuf, buf[:lastLen])) {
         out.Write(buf[lastLen:])
     } else {
         out.Write(getActiveAnsiCodes(lastBuf).getResetBytes())
-        // if this refers to a line other than the last, we need to move up to it, write contents, then move back down
-        for i := 0; i < linesFromLast; i++ {
-            out.Write(bytesMoveCursorPrevLine);
-        }
-        // bytesMoveCursorPrevLine adds an implicit carriage return; if we didn't move up at all, though, we need
-        // to write an explicit one.
-        if (isLastLine) {
-            out.Write(bytesCarriageReturn)
+        if !moveCursorToLine(out, line) && !writerState.cursorIsAtBegin {
+            out.Write(bytesCarriageReturn);
         }
         out.Write(buf)
         currStringLen := stringLen(buf)
@@ -374,26 +388,29 @@ func setTempLineOutput(out io.Writer, line int, buf []byte) {
         for i := currStringLen; i < lastStringLen; i++ {
             out.Write(bytesSpace)
         }
-        for i := 0; i < linesFromLast; i++ {
-            out.Write(bytesMoveCursorNextLine);
-        }
-        writerState.cursorIsInline = isLastLine && currStringLen >= lastStringLen
+        writerState.cursorIsInline = currStringLen >= lastStringLen
     }
-    writerState.lastTemp[line] = buf
+    writerState.cursorIsAtBegin = false
+    // This does a lot of copying to avoid aliasing; maybe some could be avoided?
+    writerState.lastTemp[line] = append([]byte{}, buf...)
 }
 
 func writeLine(out io.Writer, buf []byte) {
     setTempLineOutput(out, 0, buf)
     out.Write(getActiveAnsiCodes(buf).getResetBytes())
-    out.Write(bytesNewline)
     writerState := getWriterState(out)
     if writerState.multiline {
         writerState.lastTemp = writerState.lastTemp[1:]
         // Always keep an empty line at the bottom
         if len(writerState.lastTemp) == 0 {
             writerState.lastTemp = append(writerState.lastTemp, []byte{})
+            out.Write(bytesNewline)
+        } else {
+            writerState.cursorLineIndex = -1
+            moveCursorToLine(out, 0)
         }
     } else {
+        out.Write(bytesNewline)
         writerState.lastTemp[0] = bytesEmpty
         writerState.cursorIsInline = true
     }
@@ -401,6 +418,7 @@ func writeLine(out io.Writer, buf []byte) {
 
 var tempLineSep = []byte(" | ")
 var tempLineEllipsis = []byte("...")
+var tempLineEllipsisLength = stringLen(tempLineEllipsis)
 const minTempSegmentLength = 6
 func updateTempOutput(out io.Writer) {
     writerState := getWriterState(out)
@@ -409,58 +427,68 @@ func updateTempOutput(out io.Writer) {
     for _, logger := range writerState.tempLoggers {
         bufs = append(bufs, logger.getFormattedLine(logger.buf))
     }
-    // XXX if multiline, we do an entirely different (and simpler) algorithm here
-    numBufs := len(bufs)
-    lengths := make([]int, 0)
-    lengthSum := 0
-    for _, buf := range bufs {
-        length := stringLen(buf)
-        lengths = append(lengths, length)
-        lengthSum += length
-    }
-    charsLeft := maxWidth - stringLen(tempLineSep) * (numBufs - 1)
-    var outputBuf []byte
-    if len(bufs) > 1 {
-        if charsLeft < lengthSum {
-            ellipsisLength := stringLen(tempLineEllipsis)
-            shortenedLengths := make([]int, numBufs)
-            copy(shortenedLengths, lengths)
-            for charsLeft < lengthSum {
-                longestIndex := 0
-                longestLength := 0
-                for i, length := range shortenedLengths {
-                    if length > longestLength {
-                        longestIndex = i
-                        longestLength = length
-                    }
-                }
-                if longestLength < minTempSegmentLength {
-                    // Don't bother making segments shorter than this
-                    break
-                }
-                if longestLength == lengths[longestIndex] {
-                    // It's at max length; we need to lop off space for the ellipsis
-                    shortenedLengths[longestIndex] -= ellipsisLength + 1
-                } else {
-                    shortenedLengths[longestIndex] -= 1
-                }
-                lengthSum -= 1
-            }
-            var bufs2 [][]byte
-            for i, buf := range bufs {
-                if (shortenedLengths[i] < lengths[i]) {
-                    buf = append(trimString(buf, shortenedLengths[i]), tempLineEllipsis...)
-                }
-                bufs2 = append(bufs2, buf)
-            }
-            bufs = bufs2
+    if writerState.multiline {
+        for i := len(writerState.lastTemp); i < len(bufs); i++ {
+            moveCursorToLine(out, i - 1)
+            out.Write(bytesNewline)
+            writerState.cursorLineIndex = i
+            writerState.cursorIsInline = true
+            writerState.lastTemp = append(writerState.lastTemp, []byte{})
         }
+        for i, buf := range bufs {
+            setTempLineOutput(out, i, trimStringEllipsis(buf, maxWidth))
+        }
+    } else {
+        numBufs := len(bufs)
+        lengths := make([]int, 0)
+        lengthSum := 0
+        for _, buf := range bufs {
+            length := stringLen(buf)
+            lengths = append(lengths, length)
+            lengthSum += length
+        }
+        charsLeft := maxWidth - stringLen(tempLineSep) * (numBufs - 1)
+        var outputBuf []byte
+        if len(bufs) > 1 {
+            if charsLeft < lengthSum {
+                ellipsisLength := stringLen(tempLineEllipsis)
+                shortenedLengths := make([]int, numBufs)
+                copy(shortenedLengths, lengths)
+                for charsLeft < lengthSum {
+                    longestIndex := 0
+                    longestLength := 0
+                    for i, length := range shortenedLengths {
+                        if length > longestLength {
+                            longestIndex = i
+                            longestLength = length
+                        }
+                    }
+                    if longestLength < minTempSegmentLength {
+                        // Don't bother making segments shorter than this
+                        break
+                    }
+                    if longestLength == lengths[longestIndex] {
+                        // It's at max length; we need to lop off space for the ellipsis
+                        shortenedLengths[longestIndex] -= ellipsisLength + 1
+                    } else {
+                        shortenedLengths[longestIndex] -= 1
+                    }
+                    lengthSum -= 1
+                }
+                var bufs2 [][]byte
+                for i, buf := range bufs {
+                    if (shortenedLengths[i] < lengths[i]) {
+                        buf = append(trimString(buf, shortenedLengths[i]), tempLineEllipsis...)
+                    }
+                    bufs2 = append(bufs2, buf)
+                }
+                bufs = bufs2
+            }
+        }
+        outputBuf = bytes.Join(bufs, tempLineSep)
+        outputBuf = trimStringEllipsis(outputBuf, maxWidth)
+        setTempLineOutput(out, 0, outputBuf)
     }
-    outputBuf = bytes.Join(bufs, tempLineSep)
-    if stringLen(outputBuf) > maxWidth {
-        outputBuf = append(trimString(outputBuf, maxWidth - stringLen(tempLineEllipsis)), tempLineEllipsis...)
-    }
-    setTempLineOutput(out, 0, outputBuf)
 }
 
 func ansiEscapeBytes(colorCode int) []byte {
@@ -491,6 +519,13 @@ func trimString(buf []byte, length int) []byte {
         }
     }
     return tmp
+}
+
+func trimStringEllipsis(buf []byte, length int) []byte {
+    if stringLen(buf) > length {
+        return append(trimString(buf, length - tempLineEllipsisLength), tempLineEllipsis...)
+    }
+    return buf
 }
 
 func stringLen(buf []byte) int {
