@@ -68,13 +68,38 @@ var ansiColorCodes = map[string]int{
     "magenta": 35,
     "cyan":    36,
     "white":   37,
+    "cr":      39,
+}
+
+type TempLine struct {
+    buf []byte
 }
 
 type WriterState struct {
-    lastTempBuf    [][]byte
-    termWidth      int
-    multiline      bool
-    cursorIsInline bool
+    lastTemp        [][]byte
+    tempLoggers     []*Logger
+    termWidth       int
+    multiline       bool
+    cursorLineIndex int
+    cursorIsInline  bool
+}
+
+func (w *WriterState) removeTempLogger(l *Logger) {
+    // Remove this logger from the list of tempLoggers for this writer
+    for i, logger := range w.tempLoggers {
+        if logger == l {
+            if i == len(w.tempLoggers) - 1 {
+                w.tempLoggers = w.tempLoggers[:i]
+            } else {
+                w.tempLoggers = append(w.tempLoggers[:i], w.tempLoggers[i+1:]...)
+            }
+            break
+        }
+    }
+}
+
+func (w *WriterState) addTempLogger(l *Logger) {
+    w.tempLoggers = append(w.tempLoggers, l)
 }
 
 // ensures atomic writes; shared by all Logger instances
@@ -87,7 +112,7 @@ func getWriterState(writer io.Writer) *WriterState {
     if !ok {
         writerState = &WriterState{}
         writerState.cursorIsInline = true
-        writerState.lastTempBuf = [][]byte{[]byte{}}
+        writerState.lastTemp = [][]byte{[]byte{}}
         writers[writer] = writerState
     }
     return writerState
@@ -181,7 +206,8 @@ type Logger struct {
     tmp    []byte     // for formatting the current line
     prefixFormatted      []byte
     cursorByteIndex      int
-    partialLinesVisible  *bool
+    tempLineActive       bool
+    partialLinesEnabled  *bool
     colorEnabled         *bool
     colorTemplateEnabled *bool
     colorRegexp          *regexp.Regexp
@@ -208,7 +234,7 @@ func New(out io.Writer, prefix string, flag int) *Logger {
 // reprocessPrefix here (as it creates a circular reference back to std)
 func newStd() *Logger {
     var l = &Logger{out: os.Stderr, prefix: []byte{}, flag: LstdFlags}
-    l.partialLinesVisible = &yes
+    l.partialLinesEnabled = &yes
     l.colorRegexp = regexp.MustCompile("@\\[([\\w,]+?)(:([^)]*?))?\\]")
     l.colorEnabled = &yes
     l.colorTemplateEnabled = &no
@@ -229,8 +255,8 @@ func (l *Logger) isColorEnabled() bool {
     return isTrueDefaulted(l.colorEnabled, std.colorEnabled)
 }
 
-func (l *Logger) isPartialLinesVisible() bool {
-    return isTrueDefaulted(l.partialLinesVisible, std.partialLinesVisible)
+func (l *Logger) isPartialLinesEnabled() bool {
+    return isTrueDefaulted(l.partialLinesEnabled, std.partialLinesEnabled)
 }
 
 func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
@@ -316,30 +342,44 @@ var bytesEmpty = []byte("")
 var bytesCarriageReturn = []byte("\r")
 var bytesNewline = []byte("\n")
 var bytesSpace = []byte(" ")
+var bytesMoveCursorPrevLine = []byte("\033[1F")
+var bytesMoveCursorNextLine = []byte("\033[1E")
 
 func setTempLineOutput(out io.Writer, line int, buf []byte) {
     writerState := getWriterState(out)
-    numTempLines := len(writerState.lastTempBuf)
-    var lastBuf = writerState.lastTempBuf[line]
+    numLines := len(writerState.lastTemp) // This must be the same as len(bufs)
+    lastLineIndex := numLines - 1
+    linesFromLast := lastLineIndex - line
+    isLastLine := linesFromLast == 0
+    lastBuf := writerState.lastTemp[line]
     // These lengths are actually fine being in bytes
-    var lastLen = len(lastBuf)
-    var currLen = len(buf)
-    if writerState.cursorIsInline && numTempLines == line + 1 && currLen >= lastLen && bytes.Equal(lastBuf, buf[:lastLen]) {
+    lastLen := len(lastBuf)
+    currLen := len(buf)
+    if (isLastLine && writerState.cursorIsInline) && (currLen >= lastLen && bytes.Equal(lastBuf, buf[:lastLen])) {
         out.Write(buf[lastLen:])
     } else {
-        // XXX if line != numTempLines - 1, we need to move up to it, write contents, then move back down
         out.Write(getActiveAnsiCodes(lastBuf).getResetBytes())
-        out.Write(bytesCarriageReturn)
+        // if this refers to a line other than the last, we need to move up to it, write contents, then move back down
+        for i := 0; i < linesFromLast; i++ {
+            out.Write(bytesMoveCursorPrevLine);
+        }
+        // bytesMoveCursorPrevLine adds an implicit carriage return; if we didn't move up at all, though, we need
+        // to write an explicit one.
+        if (isLastLine) {
+            out.Write(bytesCarriageReturn)
+        }
         out.Write(buf)
-        // This results in the cursor being too far to the right, but the only case in which this happens is
-        // if we're updating the temp output during `writeLine` below, in which case the cursor's column
-        // after this operation doesn't matter.
+        currStringLen := stringLen(buf)
         lastStringLen := stringLen(lastBuf)
-        for i := stringLen(buf); i < lastStringLen; i++ {
+        for i := currStringLen; i < lastStringLen; i++ {
             out.Write(bytesSpace)
         }
+        for i := 0; i < linesFromLast; i++ {
+            out.Write(bytesMoveCursorNextLine);
+        }
+        writerState.cursorIsInline = isLastLine && currStringLen >= lastStringLen
     }
-    writerState.lastTempBuf[line] = buf
+    writerState.lastTemp[line] = buf
 }
 
 func writeLine(out io.Writer, buf []byte) {
@@ -348,9 +388,14 @@ func writeLine(out io.Writer, buf []byte) {
     out.Write(bytesNewline)
     writerState := getWriterState(out)
     if writerState.multiline {
-        writerState.lastTempBuf = writerState.lastTempBuf[1:]
+        writerState.lastTemp = writerState.lastTemp[1:]
+        // Always keep an empty line at the bottom
+        if len(writerState.lastTemp) == 0 {
+            writerState.lastTemp = append(writerState.lastTemp, []byte{})
+        }
     } else {
-        writerState.lastTempBuf[0] = bytesEmpty
+        writerState.lastTemp[0] = bytesEmpty
+        writerState.cursorIsInline = true
     }
 }
 
@@ -358,15 +403,11 @@ var tempLineSep = []byte(" | ")
 var tempLineEllipsis = []byte("...")
 const minTempSegmentLength = 6
 func updateTempOutput(out io.Writer) {
+    writerState := getWriterState(out)
     maxWidth := getTermWidth(out) - 1
     var bufs [][]byte
-    for _, logger := range loggers {
-        if logger.isPartialLinesVisible() && logger.out == out {
-            // Only include this line if it has visible text in it:
-            if stringLen(logger.buf) > 0 {
-                bufs = append(bufs, logger.getFormattedLine(logger.buf))
-            }
-        }
+    for _, logger := range writerState.tempLoggers {
+        bufs = append(bufs, logger.getFormattedLine(logger.buf))
     }
     // XXX if multiline, we do an entirely different (and simpler) algorithm here
     numBufs := len(bufs)
@@ -522,7 +563,7 @@ func (l *Logger) applyColorTemplates(s string) string {
     }
 }
 
-func (l *Logger) injectAtCursor(input []byte) {
+func (l *Logger) injectAtVirtualCursor(input []byte) {
     if len(l.buf) != l.cursorByteIndex {
         // Append s to l.buf[:cursorByteIndex], consuming l.buf[cursorByteIndex:] with
         // each rune, but also injecting ansi escapes at the new old/new transition
@@ -578,7 +619,8 @@ func (l *Logger) Output(calldepth int, s string) error {
     }
     mutex.Lock()
     defer mutex.Unlock()
-    l.injectAtCursor([]byte(s))
+    writerState := getWriterState(l.out)
+    l.injectAtVirtualCursor([]byte(s))
     wroteFullLine := false
     for true {
         indexNewline := bytes.IndexByte(l.buf, '\n')
@@ -595,7 +637,7 @@ func (l *Logger) Output(calldepth int, s string) error {
             after := l.buf[indexCr+1:]
             l.buf = l.buf[:indexCr]
             l.cursorByteIndex = 0
-            l.injectAtCursor(after)
+            l.injectAtVirtualCursor(after)
             continue
         }
         if indexNewline == -1 {
@@ -615,6 +657,8 @@ func (l *Logger) Output(calldepth int, s string) error {
             mutex.Lock()
         }
         ansiActive := getActiveAnsiCodes(currLine)
+        writerState.removeTempLogger(l)
+        l.tempLineActive = false
         writeLine(l.out, l.getFormattedLine(currLine))
         wroteFullLine = true
         // XXX This is probably inefficient?:
@@ -633,6 +677,10 @@ func (l *Logger) Output(calldepth int, s string) error {
     if (wroteFullLine) {
         l.callerFile = ""
         l.callerLine = 0
+    }
+    if !l.tempLineActive && l.isPartialLinesEnabled() && stringLen(l.buf) > 0 {
+        writerState.addTempLogger(l)
+        l.tempLineActive = true
     }
     updateTempOutput(l.out)
     return nil
@@ -732,15 +780,15 @@ func (l *Logger) Close() {
 
 
 
-func (l *Logger) SetPartialLinesVisible(flag bool) {
+func (l *Logger) SetPartialLinesEnabled(flag bool) {
     mutex.Lock()
     defer mutex.Unlock()
-    l.partialLinesVisible = boolPointer(flag)
+    l.partialLinesEnabled = boolPointer(flag)
 }
 
-func (l *Logger) ShowPartialLines() { l.SetPartialLinesVisible(true) }
+func (l *Logger) ShowPartialLines() { l.SetPartialLinesEnabled(true) }
 
-func (l *Logger) HidePartialLines() { l.SetPartialLinesVisible(false) }
+func (l *Logger) HidePartialLines() { l.SetPartialLinesEnabled(false) }
 
 func (l *Logger) SetColorEnabled(flag bool) {
     mutex.Lock()
@@ -774,12 +822,12 @@ func (l *Logger) SetTerminalWidth(width int) {
     getWriterState(l.out).termWidth = width
 }
 
-func (l *Logger) UseMultilineMode() {
+func (l *Logger) EnableMultilineMode() {
     mutex.Lock()
     defer mutex.Unlock()
     getWriterState(l.out).multiline = true
 }
-func (l *Logger) UseSinglelineMode() {
+func (l *Logger) EnableSinglelineMode() {
     mutex.Lock()
     defer mutex.Unlock()
     getWriterState(l.out).multiline = false
@@ -887,6 +935,8 @@ func EnableColorTemplate() { std.EnableColorTemplate() }
 func DisableColorTemplate() { std.DisableColorTemplate() }
 func SetColorTemplateRegexp(rgx *regexp.Regexp) { std.SetColorTemplateRegexp(rgx) }
 func SetTerminalWidth(width int) { std.SetTerminalWidth(width) }
+func EnableMultilineMode() { std.EnableMultilineMode() }
+func EnableSinglelineMode() { std.EnableSinglelineMode() }
 
 func AddAnsiCode(s string, code int) {
     ansiColorCodes[s] = code

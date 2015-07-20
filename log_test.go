@@ -11,7 +11,6 @@ func TestPrint(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
     var writer = New(&buf, "", 0)
-    defer writer.Close()
     writer.HidePartialLines()
     writer.Print("Hello ")
     writer.Print("Dan, ")
@@ -23,7 +22,12 @@ func TestPrint(t *testing.T) {
     buf.Reset()
     writer.Close()
     assert.Equal("    falling...\n", buf.String(), "Close should flush any unfinished line by appending a terminating newline")
-    buf.Reset()
+}
+
+func TestPrintNothing(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    writer := New(&buf, "", 0)
     writer.Print("")
     writer.Close()
     assert.Equal("", buf.String(), "Print and Close should output nothing if nothing was printed")
@@ -37,8 +41,8 @@ func TestTempLines(t *testing.T) {
     writer.Print("Hello ")
     assert.Equal("Hello ", buf.String())
     buf.Reset()
-    writer.Print(" Dan, ")
-    assert.Equal(" Dan, ", buf.String())
+    writer.Print("Dan, ")
+    assert.Equal("Dan, ", buf.String())
     buf.Reset()
     writer.Print("how are you?\n")
     assert.Equal("how are you?\n", buf.String())
@@ -67,9 +71,7 @@ func TestMultipleTempLines(t *testing.T) {
     assert.Equal("Writing More Code...", buf.String())
     buf.Reset()
     writer1.Print("Testing More...")
-    // This could be done more efficiently if we automatically re-ordered temp outputs, but that
-    // could also be both more and less confusing. Not sure whether to try that.
-    assert.Equal("\rTesting More... | Writing More Code...", buf.String())
+    assert.Equal(" | Testing More...", buf.String())
 }
 
 func TestMultipleTempLinesDiffWriters(t *testing.T) {
@@ -277,8 +279,48 @@ func TestCarriageReturns(t *testing.T) {
     buf.Reset()
 }
 
+func TestMultilineMode(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer1 = New(&buf, "", 0)
+    writer1.EnableMultilineMode()
+    defer writer1.Close()
+    writer1.Print("writer1...")
+    assert.Equal("writer1...", buf.String())
+    buf.Reset()
+    var writer2 = New(&buf, "", 0)
+    defer writer2.Close()
+    writer2.Print("writer2...")
+    assert.Equal("\nwriter2...", buf.String())
+    buf.Reset()
+    writer1.Print(" working...")
+    assert.Equal("\033[1Fwriter1... working...", buf.String())
+    buf.Reset()
+    writer1.Print("  50 percent finished...")
+    assert.Equal("  50 percent finished...", buf.String())
+    buf.Reset()
+    writer2.Print("working... ")
+    assert.Equal("\033[1Ewriter2... working... ", buf.String())
+    buf.Reset()
+    writer2.Print("done.\n")
+    // Need to move up to the previous line, overwrite writer1's text, then only move down a line.
+    // A newline is not necessary since we're only *completing* an existing line and not yet starting
+    // a new line.
+    assert.Equal("\033[1Fwriter2... working... done.                   \033[1Ewriter1... working...  50 percent finished...", buf.String())
+    buf.Reset()
+    writer2.Print("working again...")
+    assert.Equal("\nworking again...", buf.String())
+    buf.Reset()
+    writer1.Print("\rwriter1... working... 100 percent. done.     \n")
+    // Again, we don't append a newline, but this time, we move to the last line even though we're not
+    // going to write anything else immediately.
+    assert.Equal("\033[1Fwriter1... working... 100 percent. done.     \033[1E", buf.String())
+    buf.Reset()
+}
+
 // TODO test &/or implement:
 // - Set custom ANSI template regexp specifically or globally
 // - Add option to auto-append newlines with each Print/Printf for stock `log` compatibility
 // - Add duration output flag? "(37.2 secs) Downloading stuff... done."
 // - Experiment with multiple lines of temp output? Probably doesn't work.
+// - Test & implement proper bookkeeping around SetOutput and tempLoggers
