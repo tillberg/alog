@@ -105,11 +105,6 @@ func (w *WriterState) closeAll() {
     }
 }
 
-// ensures atomic writes; shared by all Logger instances
-var mutex sync.Mutex
-var loggers []*Logger
-var writers map[io.Writer]*WriterState = make(map[io.Writer]*WriterState)
-
 func getWriterState(writer io.Writer) *WriterState {
     writerState, ok := writers[writer]
     if !ok {
@@ -121,6 +116,37 @@ func getWriterState(writer io.Writer) *WriterState {
     return writerState
 }
 
+// ensures atomic writes; shared by all Logger instances
+var mutex sync.Mutex
+var loggers []*Logger
+var writers map[io.Writer]*WriterState = make(map[io.Writer]*WriterState)
+
+const ansiCodeResetAll = 0
+const ansiCodeHighestIntensity = 2
+const ansiCodeResetForecolor = 39
+
+var bytesEmpty = []byte("")
+var bytesCarriageReturn = []byte("\r")
+var byteNewline = byte('\n')
+var bytesNewline = []byte{byteNewline}
+var bytesSpace = []byte(" ")
+
+var bytesComma = []byte(",")
+var ansiColorRegexp = regexp.MustCompile("\033\\[(\\d+)m")
+var ansiColorOrCharRegexp = regexp.MustCompile("(\033\\[\\d+m)|.")
+var ansiBytesEscapeStart = []byte("\033[")
+var ansiBytesColorEscapeEnd = []byte("m")
+var ansiBytesMoveCursorPrevLinesEnd = []byte("F")
+var ansiBytesMoveCursorNextLinesEnd = []byte("E")
+var ansiBytesResetAll = []byte("\033[0m")
+var ansiBytesResetForecolor = []byte("\033[39m")
+
+var tempLineSep = []byte(" | ")
+var tempLineSepLength = stringLen(tempLineSep)
+var tempLineEllipsis = []byte("...")
+var tempLineEllipsisLength = stringLen(tempLineEllipsis)
+const minTempSegmentLength = 6
+
 // These facilitate "nullable" bools for some settings
 var yes = true
 var no = false
@@ -128,10 +154,6 @@ func boolPointer(flag bool) *bool {
     if flag { return &yes }
     return &no
 }
-
-const ansiCodeResetAll = 0
-const ansiCodeHighestIntensity = 2
-const ansiCodeResetForecolor = 39
 
 type ActiveAnsiCodes struct {
     intensity int
@@ -348,14 +370,6 @@ func (l *Logger) formatHeader(buf *[]byte) {
     }
 }
 
-var bytesEmpty = []byte("")
-var bytesCarriageReturn = []byte("\r")
-var byteNewline = byte('\n')
-var bytesNewline = []byte{byteNewline}
-var bytesSpace = []byte(" ")
-var bytesMoveCursorPrevLines = []byte("F")
-var bytesMoveCursorNextLines = []byte("E")
-
 func moveCursorToLine(out io.Writer, line int) bool {
     writerState := getWriterState(out)
     if line == writerState.cursorLineIndex {
@@ -364,10 +378,10 @@ func moveCursorToLine(out io.Writer, line int) bool {
     tmp := ansiBytesEscapeStart
     if line < writerState.cursorLineIndex {
         tmp = append(tmp, fmt.Sprintf("%d", writerState.cursorLineIndex - line)...)
-        tmp = append(tmp, bytesMoveCursorPrevLines...)
+        tmp = append(tmp, ansiBytesMoveCursorPrevLinesEnd...)
     } else {
         tmp = append(tmp, fmt.Sprintf("%d", line - writerState.cursorLineIndex)...)
-        tmp = append(tmp, bytesMoveCursorNextLines...)
+        tmp = append(tmp, ansiBytesMoveCursorNextLinesEnd...)
     }
     out.Write(tmp)
     writerState.cursorLineIndex = line
@@ -426,10 +440,6 @@ func writeLine(out io.Writer, buf []byte) {
     }
 }
 
-var tempLineSep = []byte(" | ")
-var tempLineEllipsis = []byte("...")
-var tempLineEllipsisLength = stringLen(tempLineEllipsis)
-const minTempSegmentLength = 6
 func updateTempOutput(out io.Writer) {
     writerState := getWriterState(out)
     maxWidth := getTermWidth(out) - 1
@@ -457,11 +467,10 @@ func updateTempOutput(out io.Writer) {
             lengths = append(lengths, length)
             lengthSum += length
         }
-        charsLeft := maxWidth - stringLen(tempLineSep) * (numBufs - 1)
+        charsLeft := maxWidth - tempLineSepLength * (numBufs - 1)
         var outputBuf []byte
         if len(bufs) > 1 {
             if charsLeft < lengthSum {
-                ellipsisLength := stringLen(tempLineEllipsis)
                 shortenedLengths := make([]int, numBufs)
                 copy(shortenedLengths, lengths)
                 for charsLeft < lengthSum {
@@ -479,7 +488,7 @@ func updateTempOutput(out io.Writer) {
                     }
                     if longestLength == lengths[longestIndex] {
                         // It's at max length; we need to lop off space for the ellipsis
-                        shortenedLengths[longestIndex] -= ellipsisLength + 1
+                        shortenedLengths[longestIndex] -= tempLineEllipsisLength + 1
                     } else {
                         shortenedLengths[longestIndex] -= 1
                     }
@@ -505,7 +514,7 @@ func ansiEscapeBytes(colorCode int) []byte {
     buf := []byte{}
     buf = append(buf, ansiBytesEscapeStart...)
     buf = append(buf, fmt.Sprintf("%d", colorCode)...)
-    buf = append(buf, ansiBytesEscapeEnd...)
+    buf = append(buf, ansiBytesColorEscapeEnd...)
     return buf
 }
 
@@ -543,13 +552,6 @@ func stringLen(buf []byte) int {
     return utf8.RuneCount(uncolorize(buf))
 }
 
-var bytesComma = []byte(",")
-var ansiColorRegexp = regexp.MustCompile("\033\\[(\\d+)m")
-var ansiColorOrCharRegexp = regexp.MustCompile("(\033\\[\\d+m)|.")
-var ansiBytesEscapeStart = []byte("\033[")
-var ansiBytesEscapeEnd = []byte("m")
-var ansiBytesResetAll = []byte("\033[0m")
-var ansiBytesResetForecolor = []byte("\033[39m")
 func (l *Logger) getFormattedLine(line []byte) []byte {
     l.tmp = l.tmp[:0]
     l.formatHeader(&l.tmp)
