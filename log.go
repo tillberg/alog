@@ -52,6 +52,7 @@ const (
     Llongfile                     // full file name and line number: /a/b/c/d.go:23
     Lshortfile                    // final file name element and line number: d.go:23. overrides Llongfile
     LUTC                          // if Ldate or Ltime is set, use UTC rather than the local time zone
+    Lelapsed                      // elapsed time since this line was first started
     LstdFlags     = Ldate | Ltime // initial values for the standard logger
 )
 
@@ -241,6 +242,7 @@ type Logger struct {
     callerFile           string
     callerLine           int
     now                  time.Time
+    lineStartTime        time.Time
 }
 
 // New creates a new Logger.   The out variable sets the
@@ -325,6 +327,50 @@ func itoa(buf *[]byte, i int, wid int) {
     *buf = append(*buf, b[bp:]...)
 }
 
+func formatDuration(duration time.Duration) []byte {
+    tmp := []byte{}
+    secs := duration.Seconds()
+    if secs >= 600 {
+        if secs >= 10 * 3600 {
+            hours := duration.Hours()
+            if hours > 9999 {
+                tmp = append(tmp, fmt.Sprintf("%4.0f", hours)...)
+            } else if hours >= 99.95 {
+                tmp = append(tmp, fmt.Sprintf("%4.0f", hours)[:4]...)
+            } else  {
+                tmp = append(tmp, fmt.Sprintf("%4.1f", hours)[:4]...)
+            }
+            tmp = append(tmp, "h"...)
+        } else {
+            mins := duration.Minutes()
+            if mins >= 99.95 {
+                tmp = append(tmp, fmt.Sprintf("%4.0f", mins)[:4]...)
+            } else  {
+                tmp = append(tmp, fmt.Sprintf("%4.1f", mins)[:4]...)
+            }
+            tmp = append(tmp, "m"...)
+        }
+    } else {
+        secs := duration.Seconds()
+        if secs >= 0.9995 {
+            if secs >= 99.95 {
+                tmp = append(tmp, fmt.Sprintf("%4.0f", secs)[:4]...)
+            } else {
+                tmp = append(tmp, fmt.Sprintf("%4.2f", secs)[:4]...)
+            }
+            tmp = append(tmp, "s"...)
+        } else {
+            if secs >= 0.00995 {
+                tmp = append(tmp, fmt.Sprintf("%3.0f", 1000 * secs)[:3]...)
+            } else {
+                tmp = append(tmp, fmt.Sprintf("%3.1f", 1000 * secs)[:3]...)
+            }
+            tmp = append(tmp, "ms"...)
+        }
+    }
+    return tmp
+}
+
 func (l *Logger) formatHeader(buf *[]byte) {
     *buf = append(*buf, l.prefixFormatted...)
     if l.flag&(Ldate|Ltime|Lmicroseconds) != 0 {
@@ -352,21 +398,15 @@ func (l *Logger) formatHeader(buf *[]byte) {
         }
     }
     if l.flag&(Lshortfile|Llongfile) != 0 {
-        // XXX Is this transformation idempotent?
-        if l.flag&Lshortfile != 0 {
-            short := l.callerFile
-            for i := len(l.callerFile) - 1; i > 0; i-- {
-                if l.callerFile[i] == '/' {
-                    short = l.callerFile[i+1:]
-                    break
-                }
-            }
-            l.callerFile = short
-        }
         *buf = append(*buf, l.callerFile...)
         *buf = append(*buf, ':')
         itoa(buf, l.callerLine, -1)
         *buf = append(*buf, ": "...)
+    }
+    if l.flag&Lelapsed != 0 && l.now != l.lineStartTime {
+        *buf = append(*buf, "("...)
+        *buf = append(*buf, formatDuration(l.now.Sub(l.lineStartTime))...)
+        *buf = append(*buf, ") "...)
     }
 }
 
@@ -705,6 +745,14 @@ func (l *Logger) Output(calldepth int, _s string) error {
                 l.callerFile = "???"
                 l.callerLine = 0
             }
+            if l.flag&Lshortfile != 0 {
+                for i := len(l.callerFile) - 1; i > 0; i-- {
+                    if l.callerFile[i] == '/' {
+                        l.callerFile = l.callerFile[i+1:]
+                        break
+                    }
+                }
+            }
             mutex.Lock()
         }
         ansiActive := getActiveAnsiCodes(currLine)
@@ -732,6 +780,7 @@ func (l *Logger) Output(calldepth int, _s string) error {
     if !l.tempLineActive && l.isPartialLinesEnabled() && stringLen(l.buf) > 0 {
         writerState.addTempLogger(l)
         l.tempLineActive = true
+        l.lineStartTime = l.now
     }
     updateTempOutput(l.out)
     return nil

@@ -4,6 +4,7 @@ import (
     "bytes"
     "os"
     "testing"
+    "time"
     "github.com/stretchr/testify/assert"
 )
 
@@ -352,6 +353,49 @@ func TestAutoNewlines(t *testing.T) {
     buf.Reset()
 }
 
+func TestFlagElapsed(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer = New(&buf, "$$ ", Lelapsed)
+    defer writer.Close()
+    writer.Print("Testing... ")
+    assert.Equal("$$ Testing... ", buf.String())
+    buf.Reset()
+    writer.Print("done.\n")
+    assert.Equal("\r$$ (", buf.String()[:5])
+    buf.Reset()
+}
+
+func TestFormatDuration(t *testing.T) {
+    assert := assert.New(t)
+    assert.Equal("0.1ms", string(formatDuration(   100 * time.Microsecond)))
+    assert.Equal("0.5ms", string(formatDuration(   500 * time.Microsecond)))
+    assert.Equal("1.0ms", string(formatDuration(  1000 * time.Microsecond)))
+    assert.Equal("9.9ms", string(formatDuration(  9900 * time.Microsecond)))
+    assert.Equal(" 10ms", string(formatDuration( 10000 * time.Microsecond)))
+    assert.Equal(" 99ms", string(formatDuration( 99000 * time.Microsecond)))
+    assert.Equal("100ms", string(formatDuration( 99500 * time.Microsecond)))
+    assert.Equal("100ms", string(formatDuration(100000 * time.Microsecond)))
+    assert.Equal("999ms", string(formatDuration(999000 * time.Microsecond)))
+    assert.Equal("1.00s", string(formatDuration(999500 * time.Microsecond)))
+    assert.Equal("1.00s", string(formatDuration(  1000 * time.Millisecond)))
+    assert.Equal("9.99s", string(formatDuration(  9990 * time.Millisecond)))
+    assert.Equal("10.0s", string(formatDuration( 10000 * time.Millisecond)))
+    assert.Equal("99.9s", string(formatDuration( 99900 * time.Millisecond)))
+    assert.Equal(" 100s", string(formatDuration(   100 * time.Second)))
+    assert.Equal("10.0m", string(formatDuration(   600 * time.Second)))
+    assert.Equal("99.9m", string(formatDuration(  5994 * time.Second)))
+    assert.Equal(" 100m", string(formatDuration(  5997 * time.Second)))
+    assert.Equal(" 100m", string(formatDuration(  6000 * time.Second)))
+    assert.Equal("10.0h", string(formatDuration(   600 * time.Minute)))
+    assert.Equal("99.9h", string(formatDuration(  5994 * time.Minute)))
+    assert.Equal(" 100h", string(formatDuration(  5997 * time.Minute)))
+    assert.Equal(" 100h", string(formatDuration(  6000 * time.Minute)))
+    assert.Equal(" 100h", string(formatDuration(  6000 * time.Minute)))
+    assert.Equal("9999h", string(formatDuration(  9999 * time.Hour)))
+    assert.Equal("99999h", string(formatDuration(99999 * time.Hour)))
+    assert.Equal("999999h", string(formatDuration(999999 * time.Hour)))
+}
+
 // TODO test &/or implement:
 // - Set custom ANSI template regexp specifically or globally
-// - Add duration output flag? "(37.2 secs) Downloading stuff... done."
