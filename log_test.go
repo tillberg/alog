@@ -318,8 +318,40 @@ func TestMultilineMode(t *testing.T) {
     buf.Reset()
 }
 
+func TestAutoNewlines(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer1 = New(&buf, "", 0)
+    defer writer1.Close()
+    var writer2 = New(&buf, "", 0)
+    defer writer2.Close()
+    writer1.Print("this is ")
+    assert.Equal("this is ", buf.String())
+    buf.Reset()
+    EnableAutoNewlines()
+    assert.Equal("", buf.String(), "AutoNewlines does not take effect immediately")
+    buf.Reset()
+    writer1.Print("this is a partial line.")
+    assert.Equal("this is a partial line.\n", buf.String())
+    buf.Reset()
+    writer2.Print("this is a partial line.")
+    assert.Equal("this is a partial line.\n", buf.String())
+    buf.Reset()
+    DisableAutoNewlines()
+    writer1.Print("this is ")
+    assert.Equal("this is ", buf.String())
+    buf.Reset()
+    writer1.EnableAutoNewlines()
+    assert.Equal("", buf.String(), "AutoNewlines does not take effect immediately")
+    buf.Reset()
+    writer1.Print("this is a partial line.")
+    assert.Equal("this is a partial line.\n", buf.String())
+    buf.Reset()
+    writer2.Print("this is a partial line.")
+    assert.Equal("this is a partial line.", buf.String())
+    buf.Reset()
+}
+
 // TODO test &/or implement:
 // - Set custom ANSI template regexp specifically or globally
-// - Add option to auto-append newlines with each Print/Printf for stock `log` compatibility
 // - Add duration output flag? "(37.2 secs) Downloading stuff... done."
-// - Test & implement proper bookkeeping around SetOutput and tempLoggers

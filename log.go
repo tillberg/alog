@@ -71,10 +71,6 @@ var ansiColorCodes = map[string]int{
     "cr":      39,
 }
 
-type TempLine struct {
-    buf []byte
-}
-
 type WriterState struct {
     lastTemp        [][]byte
     tempLoggers     []*Logger
@@ -101,6 +97,12 @@ func (w *WriterState) removeTempLogger(l *Logger) {
 
 func (w *WriterState) addTempLogger(l *Logger) {
     w.tempLoggers = append(w.tempLoggers, l)
+}
+
+func (w *WriterState) closeAll() {
+    for _, logger := range w.tempLoggers {
+        logger.Close()
+    }
 }
 
 // ensures atomic writes; shared by all Logger instances
@@ -211,6 +213,7 @@ type Logger struct {
     partialLinesEnabled  *bool
     colorEnabled         *bool
     colorTemplateEnabled *bool
+    autoAppendNewline    *bool
     colorRegexp          *regexp.Regexp
     termWidth            int
     callerFile           string
@@ -239,6 +242,7 @@ func newStd() *Logger {
     l.colorRegexp = regexp.MustCompile("@\\[([\\w,]+?)(:([^)]*?))?\\]")
     l.colorEnabled = &yes
     l.colorTemplateEnabled = &no
+    l.autoAppendNewline = &no
     loggers = append(loggers, l)
     return l
 }
@@ -260,6 +264,10 @@ func (l *Logger) isPartialLinesEnabled() bool {
     return isTrueDefaulted(l.partialLinesEnabled, std.partialLinesEnabled)
 }
 
+func (l *Logger) isAutoNewlineEnabled() bool {
+    return isTrueDefaulted(l.autoAppendNewline, std.autoAppendNewline)
+}
+
 func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
     if !isTrueDefaulted(l.colorTemplateEnabled, std.colorTemplateEnabled) {
         return nil
@@ -272,6 +280,7 @@ func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
 
 // SetOutput sets the output destination for the logger.
 func (l *Logger) SetOutput(w io.Writer) {
+    l.Close()
     mutex.Lock()
     defer mutex.Unlock()
     l.out = w
@@ -341,7 +350,8 @@ func (l *Logger) formatHeader(buf *[]byte) {
 
 var bytesEmpty = []byte("")
 var bytesCarriageReturn = []byte("\r")
-var bytesNewline = []byte("\n")
+var byteNewline = byte('\n')
+var bytesNewline = []byte{byteNewline}
 var bytesSpace = []byte(" ")
 var bytesMoveCursorPrevLines = []byte("F")
 var bytesMoveCursorNextLines = []byte("E")
@@ -647,7 +657,7 @@ func (l *Logger) injectAtVirtualCursor(input []byte) {
 // already a newline.  Calldepth is used to recover the PC and is
 // provided for generality, although at the moment on all pre-defined
 // paths it will be 2.
-func (l *Logger) Output(calldepth int, s string) error {
+func (l *Logger) Output(calldepth int, _s string) error {
     l.now = time.Now() // get this early.
     if l.flag&LUTC != 0 {
         l.now = l.now.UTC()
@@ -655,7 +665,11 @@ func (l *Logger) Output(calldepth int, s string) error {
     mutex.Lock()
     defer mutex.Unlock()
     writerState := getWriterState(l.out)
-    l.injectAtVirtualCursor([]byte(s))
+    s := []byte(_s)
+    if l.isAutoNewlineEnabled() && len(s) > 0 && s[len(s)-1] != byteNewline {
+        s = append(s, byteNewline)
+    }
+    l.injectAtVirtualCursor(s)
     wroteFullLine := false
     for true {
         indexNewline := bytes.IndexByte(l.buf, '\n')
@@ -814,15 +828,12 @@ func (l *Logger) Close() {
 }
 
 
-
 func (l *Logger) SetPartialLinesEnabled(flag bool) {
     mutex.Lock()
     defer mutex.Unlock()
     l.partialLinesEnabled = boolPointer(flag)
 }
-
 func (l *Logger) ShowPartialLines() { l.SetPartialLinesEnabled(true) }
-
 func (l *Logger) HidePartialLines() { l.SetPartialLinesEnabled(false) }
 
 func (l *Logger) SetColorEnabled(flag bool) {
@@ -830,9 +841,7 @@ func (l *Logger) SetColorEnabled(flag bool) {
     defer mutex.Unlock()
     l.colorEnabled = boolPointer(flag)
 }
-
 func (l *Logger) EnableColor() { l.SetColorEnabled(true) }
-
 func (l *Logger) DisableColor() { l.SetColorEnabled(false) }
 
 func (l *Logger) SetColorTemplateEnabled(flag bool) {
@@ -841,9 +850,16 @@ func (l *Logger) SetColorTemplateEnabled(flag bool) {
     l.colorTemplateEnabled = boolPointer(flag)
     l.reprocessPrefix()
 }
-
 func (l* Logger) EnableColorTemplate() { l.SetColorTemplateEnabled(true) }
 func (l* Logger) DisableColorTemplate() { l.SetColorTemplateEnabled(false) }
+
+func (l *Logger) SetAutoNewlines(flag bool) {
+    mutex.Lock()
+    defer mutex.Unlock()
+    l.autoAppendNewline = boolPointer(flag)
+}
+func (l *Logger) EnableAutoNewlines() { l.SetAutoNewlines(true) }
+func (l *Logger) DisableAutoNewlines() { l.SetAutoNewlines(false) }
 
 func (l *Logger) SetColorTemplateRegexp(rgx *regexp.Regexp) {
     mutex.Lock()
@@ -854,19 +870,18 @@ func (l *Logger) SetColorTemplateRegexp(rgx *regexp.Regexp) {
 func (l *Logger) SetTerminalWidth(width int) {
     mutex.Lock()
     defer mutex.Unlock()
+    getWriterState(l.out).closeAll()
     getWriterState(l.out).termWidth = width
 }
 
-func (l *Logger) EnableMultilineMode() {
+func (l *Logger) SetMultilineEnabled(flag bool) {
     mutex.Lock()
     defer mutex.Unlock()
-    getWriterState(l.out).multiline = true
+    getWriterState(l.out).closeAll()
+    getWriterState(l.out).multiline = flag
 }
-func (l *Logger) EnableSinglelineMode() {
-    mutex.Lock()
-    defer mutex.Unlock()
-    getWriterState(l.out).multiline = false
-}
+func (l *Logger) EnableMultilineMode() { l.SetMultilineEnabled(true) }
+func (l *Logger) EnableSinglelineMode() { l.SetMultilineEnabled(false) }
 
 // func (l *Logger) SetColorTemplate(str string) {
 //     var rgx = str.replace
@@ -878,6 +893,7 @@ func (l *Logger) EnableSinglelineMode() {
 
 // SetOutput sets the output destination for the standard logger.
 func SetOutput(w io.Writer) {
+    std.Close()
     mutex.Lock()
     defer mutex.Unlock()
     std.out = w
@@ -968,6 +984,8 @@ func EnableColor() { std.EnableColor() }
 func DisableColor() { std.DisableColor() }
 func EnableColorTemplate() { std.EnableColorTemplate() }
 func DisableColorTemplate() { std.DisableColorTemplate() }
+func EnableAutoNewlines() { std.SetAutoNewlines(true) }
+func DisableAutoNewlines() { std.SetAutoNewlines(false) }
 func SetColorTemplateRegexp(rgx *regexp.Regexp) { std.SetColorTemplateRegexp(rgx) }
 func SetTerminalWidth(width int) { std.SetTerminalWidth(width) }
 func EnableMultilineMode() { std.EnableMultilineMode() }
