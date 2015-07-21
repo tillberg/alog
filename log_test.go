@@ -419,5 +419,17 @@ func TestFormatDuration(t *testing.T) {
     assert.Equal("999999h", string(formatDuration(999999 * time.Hour)))
 }
 
+func TestLoggerInception(t *testing.T) {
+    assert := assert.New(t)
+    var buf bytes.Buffer
+    var writer1 = New(&buf, "", 0)
+    defer writer1.Close()
+    var writer2 = New(writer1, "prefix: ", 0)
+    defer writer2.Close()
+    writer2.Print("hello\n")
+    assert.Equal("prefix: hello\n", buf.String())
+    buf.Reset()
+}
+
 // TODO test &/or implement:
 // - Set custom ANSI template regexp specifically or globally

@@ -73,6 +73,7 @@ var ansiColorCodes = map[string]int{
 }
 
 type WriterState struct {
+    mutex           sync.Mutex
     lastTemp        [][]byte
     tempLoggers     []*Logger
     termWidth       int
@@ -107,18 +108,18 @@ func (w *WriterState) closeAll() {
 }
 
 func getWriterState(writer io.Writer) *WriterState {
-    writerState, ok := writers[writer]
+    ws, ok := writers[writer]
     if !ok {
-        writerState = &WriterState{}
-        writerState.cursorIsInline = true
-        writerState.lastTemp = [][]byte{[]byte{}}
-        writers[writer] = writerState
+        ws = &WriterState{}
+        ws.cursorIsInline = true
+        ws.lastTemp = [][]byte{[]byte{}}
+        writers[writer] = ws
     }
-    return writerState
+    return ws
 }
 
 // ensures atomic writes; shared by all Logger instances
-var mutex sync.Mutex
+var mutexGlobal sync.Mutex
 var loggers []*Logger
 var writers map[io.Writer]*WriterState = make(map[io.Writer]*WriterState)
 
@@ -199,9 +200,9 @@ func getActiveAnsiCodes(buf []byte) *ActiveAnsiCodes {
 
 // GetSize returns the dimensions of the given terminal.
 func getTermWidth(writer io.Writer) int {
-    writerState := getWriterState(writer)
-    if writerState.termWidth != 0 {
-        return writerState.termWidth
+    ws := getWriterState(writer)
+    if ws.termWidth != 0 {
+        return ws.termWidth
     }
     var fd int
     if writer == os.Stdout {
@@ -250,8 +251,8 @@ type Logger struct {
 // The prefix appears at the beginning of each generated log line.
 // The flag argument defines the logging properties.
 func New(out io.Writer, prefix string, flag int) *Logger {
-    mutex.Lock()
-    defer mutex.Unlock()
+    mutexGlobal.Lock()
+    defer mutexGlobal.Unlock()
     var l = &Logger{out: out, prefix: []byte(prefix), flag: flag}
     l.reprocessPrefix()
     loggers = append(loggers, l)
@@ -304,9 +305,12 @@ func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
 
 // SetOutput sets the output destination for the logger.
 func (l *Logger) SetOutput(w io.Writer) {
+    // This is all not really threadsafe. Calling SetOutput while simultaneously writing
+    // data will result in undefined behavior.
     l.Close()
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.out = w
 }
 
@@ -411,28 +415,28 @@ func (l *Logger) formatHeader(buf *[]byte) {
 }
 
 func moveCursorToLine(out io.Writer, line int) bool {
-    writerState := getWriterState(out)
-    if line == writerState.cursorLineIndex {
+    ws := getWriterState(out)
+    if line == ws.cursorLineIndex {
         return false
     }
     tmp := ansiBytesEscapeStart
-    if line < writerState.cursorLineIndex {
-        tmp = append(tmp, fmt.Sprintf("%d", writerState.cursorLineIndex - line)...)
+    if line < ws.cursorLineIndex {
+        tmp = append(tmp, fmt.Sprintf("%d", ws.cursorLineIndex - line)...)
         tmp = append(tmp, ansiBytesMoveCursorPrevLinesEnd...)
     } else {
-        tmp = append(tmp, fmt.Sprintf("%d", line - writerState.cursorLineIndex)...)
+        tmp = append(tmp, fmt.Sprintf("%d", line - ws.cursorLineIndex)...)
         tmp = append(tmp, ansiBytesMoveCursorNextLinesEnd...)
     }
     out.Write(tmp)
-    writerState.cursorLineIndex = line
-    writerState.cursorIsAtBegin = true
+    ws.cursorLineIndex = line
+    ws.cursorIsAtBegin = true
     return true
 }
 
 func setTempLineOutput(out io.Writer, line int, buf []byte) {
-    writerState := getWriterState(out)
-    cursorIsOnlineAndInline := writerState.cursorLineIndex == line && writerState.cursorIsInline
-    lastBuf := writerState.lastTemp[line]
+    ws := getWriterState(out)
+    cursorIsOnlineAndInline := ws.cursorLineIndex == line && ws.cursorIsInline
+    lastBuf := ws.lastTemp[line]
     // These lengths are actually fine being in bytes
     lastLen := len(lastBuf)
     currLen := len(buf)
@@ -443,7 +447,7 @@ func setTempLineOutput(out io.Writer, line int, buf []byte) {
         out.Write(buf[lastLen:])
     } else {
         out.Write(getActiveAnsiCodes(lastBuf).getResetBytes())
-        if !moveCursorToLine(out, line) && !writerState.cursorIsAtBegin {
+        if !moveCursorToLine(out, line) && !ws.cursorIsAtBegin {
             out.Write(bytesCarriageReturn);
         }
         out.Write(buf)
@@ -452,48 +456,48 @@ func setTempLineOutput(out io.Writer, line int, buf []byte) {
         for i := currStringLen; i < lastStringLen; i++ {
             out.Write(bytesSpace)
         }
-        writerState.cursorIsInline = currStringLen >= lastStringLen
+        ws.cursorIsInline = currStringLen >= lastStringLen
     }
-    writerState.cursorIsAtBegin = false
+    ws.cursorIsAtBegin = false
     // This does a lot of copying to avoid aliasing; maybe some could be avoided?
-    writerState.lastTemp[line] = append([]byte{}, buf...)
+    ws.lastTemp[line] = append([]byte{}, buf...)
 }
 
 func writeLine(out io.Writer, buf []byte) {
     setTempLineOutput(out, 0, buf)
     out.Write(getActiveAnsiCodes(buf).getResetBytes())
-    writerState := getWriterState(out)
-    if writerState.multiline {
-        writerState.lastTemp = writerState.lastTemp[1:]
+    ws := getWriterState(out)
+    if ws.multiline {
+        ws.lastTemp = ws.lastTemp[1:]
         // Always keep an empty line at the bottom
-        if len(writerState.lastTemp) == 0 {
-            writerState.lastTemp = append(writerState.lastTemp, []byte{})
+        if len(ws.lastTemp) == 0 {
+            ws.lastTemp = append(ws.lastTemp, []byte{})
             out.Write(bytesNewline)
         } else {
-            writerState.cursorLineIndex = -1
+            ws.cursorLineIndex = -1
             moveCursorToLine(out, 0)
         }
     } else {
         out.Write(bytesNewline)
-        writerState.lastTemp[0] = bytesEmpty
-        writerState.cursorIsInline = true
+        ws.lastTemp[0] = bytesEmpty
+        ws.cursorIsInline = true
     }
 }
 
 func updateTempOutput(out io.Writer) {
-    writerState := getWriterState(out)
+    ws := getWriterState(out)
     maxWidth := getTermWidth(out) - 1
     var bufs [][]byte
-    for _, logger := range writerState.tempLoggers {
+    for _, logger := range ws.tempLoggers {
         bufs = append(bufs, logger.getFormattedLine(logger.buf))
     }
-    if writerState.multiline {
-        for i := len(writerState.lastTemp); i < len(bufs); i++ {
+    if ws.multiline {
+        for i := len(ws.lastTemp); i < len(bufs); i++ {
             moveCursorToLine(out, i - 1)
             out.Write(bytesNewline)
-            writerState.cursorLineIndex = i
-            writerState.cursorIsInline = true
-            writerState.lastTemp = append(writerState.lastTemp, []byte{})
+            ws.cursorLineIndex = i
+            ws.cursorIsInline = true
+            ws.lastTemp = append(ws.lastTemp, []byte{})
         }
         for i, buf := range bufs {
             setTempLineOutput(out, i, trimStringEllipsis(buf, maxWidth))
@@ -640,9 +644,10 @@ func processColorTemplates(colorTemplateRegexp *regexp.Regexp, buf []byte) []byt
 }
 
 func (l *Logger) applyColorTemplates(s string) string {
-    mutex.Lock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
     colorTemplateRegexp := l.getColorTemplateRegexp()
-    mutex.Unlock()
+    ws.mutex.Unlock()
     if colorTemplateRegexp != nil {
         return string(processColorTemplates(colorTemplateRegexp, []byte(s)))
     } else {
@@ -704,9 +709,9 @@ func (l *Logger) Output(calldepth int, _s string) error {
     if l.flag&LUTC != 0 {
         l.now = l.now.UTC()
     }
-    mutex.Lock()
-    defer mutex.Unlock()
-    writerState := getWriterState(l.out)
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     s := []byte(_s)
     if l.isAutoNewlineEnabled() && len(s) > 0 && s[len(s)-1] != byteNewline {
         s = append(s, byteNewline)
@@ -738,7 +743,7 @@ func (l *Logger) Output(calldepth int, _s string) error {
         l.cursorByteIndex -= indexNewline + 1
         if l.flag&(Lshortfile|Llongfile) != 0 && len(l.callerFile) == 0 {
             // release lock while getting caller info - it's expensive.
-            mutex.Unlock()
+            ws.mutex.Unlock()
             var ok bool
             _, l.callerFile, l.callerLine, ok = runtime.Caller(calldepth)
             if !ok {
@@ -753,10 +758,10 @@ func (l *Logger) Output(calldepth int, _s string) error {
                     }
                 }
             }
-            mutex.Lock()
+            ws.mutex.Lock()
         }
         ansiActive := getActiveAnsiCodes(currLine)
-        writerState.removeTempLogger(l)
+        ws.removeTempLogger(l)
         l.tempLineActive = false
         writeLine(l.out, l.getFormattedLine(currLine))
         wroteFullLine = true
@@ -778,7 +783,7 @@ func (l *Logger) Output(calldepth int, _s string) error {
         l.callerLine = 0
     }
     if !l.tempLineActive && l.isPartialLinesEnabled() && stringLen(l.buf) > 0 {
-        writerState.addTempLogger(l)
+        ws.addTempLogger(l)
         l.tempLineActive = true
         l.lineStartTime = l.now
     }
@@ -797,10 +802,11 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 func (l *Logger) Print(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprint(v...))) }
 
 func (l *Logger) truncateBuf() {
-    mutex.Lock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
     l.buf = l.buf[:0]
     l.cursorByteIndex = 0
-    mutex.Unlock()
+    ws.mutex.Unlock()
 }
 
 func (l *Logger) Replacef(format string, v ...interface{}) {
@@ -858,63 +864,76 @@ func (l *Logger) Panicln(v ...interface{}) {
 
 // Flags returns the output flags for the logger.
 func (l *Logger) Flags() int {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     return l.flag
 }
 
 // SetFlags sets the output flags for the logger.
 func (l *Logger) SetFlags(flag int) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.flag = flag
 }
 
 // Prefix returns the output prefix for the logger.
 func (l *Logger) Prefix() string {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     return string(l.prefix)
 }
 
 // SetPrefix sets the output prefix for the logger.
 func (l *Logger) SetPrefix(prefix string) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.prefix = []byte(prefix)
     l.reprocessPrefix()
 }
 
+func (l *Logger) Write(p []byte) (n int, err error) {
+    err = l.Output(2, string(p))
+    return len(p), err
+}
+
 func (l *Logger) Close() {
-    mutex.Lock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
     if len(l.buf) > 0 {
-        mutex.Unlock()
+        ws.mutex.Unlock()
         l.Output(2, "\n")
     } else {
-        mutex.Unlock()
+        ws.mutex.Unlock()
     }
 }
 
 
 func (l *Logger) SetPartialLinesEnabled(flag bool) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.partialLinesEnabled = boolPointer(flag)
 }
 func (l *Logger) ShowPartialLines() { l.SetPartialLinesEnabled(true) }
 func (l *Logger) HidePartialLines() { l.SetPartialLinesEnabled(false) }
 
 func (l *Logger) SetColorEnabled(flag bool) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.colorEnabled = boolPointer(flag)
 }
 func (l *Logger) EnableColor() { l.SetColorEnabled(true) }
 func (l *Logger) DisableColor() { l.SetColorEnabled(false) }
 
 func (l *Logger) SetColorTemplateEnabled(flag bool) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.colorTemplateEnabled = boolPointer(flag)
     l.reprocessPrefix()
 }
@@ -922,29 +941,33 @@ func (l* Logger) EnableColorTemplate() { l.SetColorTemplateEnabled(true) }
 func (l* Logger) DisableColorTemplate() { l.SetColorTemplateEnabled(false) }
 
 func (l *Logger) SetAutoNewlines(flag bool) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.autoAppendNewline = boolPointer(flag)
 }
 func (l *Logger) EnableAutoNewlines() { l.SetAutoNewlines(true) }
 func (l *Logger) DisableAutoNewlines() { l.SetAutoNewlines(false) }
 
 func (l *Logger) SetColorTemplateRegexp(rgx *regexp.Regexp) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.colorRegexp = rgx
 }
 
 func (l *Logger) SetTerminalWidth(width int) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     getWriterState(l.out).closeAll()
     getWriterState(l.out).termWidth = width
 }
 
 func (l *Logger) SetMultilineEnabled(flag bool) {
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     getWriterState(l.out).closeAll()
     getWriterState(l.out).multiline = flag
 }
@@ -962,8 +985,9 @@ func (l *Logger) EnableSinglelineMode() { l.SetMultilineEnabled(false) }
 // SetOutput sets the output destination for the standard logger.
 func SetOutput(w io.Writer) {
     std.Close()
-    mutex.Lock()
-    defer mutex.Unlock()
+    ws := getWriterState(std.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     std.out = w
 }
 
