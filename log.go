@@ -22,6 +22,7 @@ package log
 
 import (
     "bytes"
+    "errors"
     "fmt"
     "io"
     "os"
@@ -104,13 +105,6 @@ func (w *WriterState) addTempLogger(l *Logger) {
 func (w *WriterState) flushAll() {
     for _, logger := range w.tempLoggers {
         logger.flushInt()
-    }
-}
-
-func (w *WriterState) closeAll() {
-    for _, logger := range w.tempLoggers {
-        logger.flushInt()
-        logger.closeInt()
     }
 }
 
@@ -317,10 +311,10 @@ func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
 func (l *Logger) SetOutput(w io.Writer) {
     // This is all not really threadsafe. Calling SetOutput while simultaneously writing
     // data will result in undefined behavior.
-    l.Flush()
     ws := getWriterState(l.out)
     ws.mutex.Lock()
     defer ws.mutex.Unlock()
+    l.flushInt()
     l.out = w
 }
 
@@ -736,7 +730,7 @@ func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
         defer ws.mutex.Unlock()
     }
     if l.isClosed {
-        return nil
+        return errors.New("Attempted to write to closed Logger.")
     }
     if l.isAutoNewlineEnabled() && len(s) > 0 && s[len(s)-1] != byteNewline {
         s = append(s, byteNewline)
@@ -938,19 +932,11 @@ func (l *Logger) closeInt() {
     l.isClosed = true
 }
 
-func (l *Logger) Flush() {
+func (l *Logger) Close() {
     ws := getWriterState(l.out)
     ws.mutex.Lock()
-    if len(l.buf) > 0 {
-        ws.mutex.Unlock()
-        l.intOutput(2, []byte("\n"), false)
-    } else {
-        ws.mutex.Unlock()
-    }
-}
-
-func (l *Logger) Close() {
-    l.Flush()
+    defer ws.mutex.Unlock()
+    l.flushInt()
     l.closeInt()
 }
 
@@ -1026,10 +1012,10 @@ func (l *Logger) EnableSinglelineMode() { l.SetMultilineEnabled(false) }
 
 // SetOutput sets the output destination for the standard logger.
 func SetOutput(w io.Writer) {
-    std.Flush()
     ws := getWriterState(std.out)
     ws.mutex.Lock()
     defer ws.mutex.Unlock()
+    std.flushInt()
     std.out = w
 }
 
@@ -1143,21 +1129,6 @@ func EnableSinglelineMode() { std.EnableSinglelineMode() }
 
 func AddAnsiCode(s string, code int) {
     ansiColorCodes[s] = code
-}
-
-func CloseAll() {
-    mutexGlobal.Lock()
-    _writers := []*WriterState{}
-    for _, ws := range writers {
-        _writers = append(_writers, ws)
-    }
-    mutexGlobal.Unlock()
-    for _, ws := range _writers {
-        ws.mutex.Lock()
-        // fmt.Printf("Clearing house.\n")
-        ws.closeAll()
-        ws.mutex.Unlock()
-    }
 }
 
 // Output writes the output for a logging event.  The string s contains
