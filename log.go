@@ -101,13 +101,22 @@ func (w *WriterState) addTempLogger(l *Logger) {
     w.tempLoggers = append(w.tempLoggers, l)
 }
 
+func (w *WriterState) flushAll() {
+    for _, logger := range w.tempLoggers {
+        logger.flushInt()
+    }
+}
+
 func (w *WriterState) closeAll() {
     for _, logger := range w.tempLoggers {
-        logger.Close()
+        logger.flushInt()
+        logger.closeInt()
     }
 }
 
 func getWriterState(writer io.Writer) *WriterState {
+    mutexGlobal.Lock()
+    defer mutexGlobal.Unlock()
     ws, ok := writers[writer]
     if !ok {
         ws = &WriterState{}
@@ -234,6 +243,7 @@ type Logger struct {
     prefixFormatted      []byte
     cursorByteIndex      int
     tempLineActive       bool
+    isClosed             bool
     partialLinesEnabled  *bool
     colorEnabled         *bool
     colorTemplateEnabled *bool
@@ -307,7 +317,7 @@ func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
 func (l *Logger) SetOutput(w io.Writer) {
     // This is all not really threadsafe. Calling SetOutput while simultaneously writing
     // data will result in undefined behavior.
-    l.Close()
+    l.Flush()
     ws := getWriterState(l.out)
     ws.mutex.Lock()
     defer ws.mutex.Unlock()
@@ -472,6 +482,7 @@ func writeLine(out io.Writer, buf []byte) {
         // Always keep an empty line at the bottom
         if len(ws.lastTemp) == 0 {
             ws.lastTemp = append(ws.lastTemp, []byte{})
+            moveCursorToLine(out, 0)
             out.Write(bytesNewline)
         } else {
             ws.cursorLineIndex = -1
@@ -643,11 +654,15 @@ func processColorTemplates(colorTemplateRegexp *regexp.Regexp, buf []byte) []byt
     return colorTemplateRegexp.ReplaceAllFunc(buf, colorTemplateReplacer)
 }
 
-func (l *Logger) applyColorTemplates(s string) string {
+func (l *Logger) applyColorTemplates(s string, haveLock bool) string {
     ws := getWriterState(l.out)
-    ws.mutex.Lock()
+    if !haveLock {
+        ws.mutex.Lock()
+    }
     colorTemplateRegexp := l.getColorTemplateRegexp()
-    ws.mutex.Unlock()
+    if !haveLock {
+        ws.mutex.Unlock()
+    }
     if colorTemplateRegexp != nil {
         return string(processColorTemplates(colorTemplateRegexp, []byte(s)))
     } else {
@@ -698,21 +713,31 @@ func (l *Logger) injectAtVirtualCursor(input []byte) {
     }
 }
 
+
+
+func (l *Logger) Output(calldepth int, _s string) error {
+    return l.intOutput(calldepth + 1, []byte(_s), false)
+}
+
 // Output writes the output for a logging event.  The string s contains
 // the text to print after the prefix specified by the flags of the
 // Logger.  A newline is appended if the last character of s is not
 // already a newline.  Calldepth is used to recover the PC and is
 // provided for generality, although at the moment on all pre-defined
 // paths it will be 2.
-func (l *Logger) Output(calldepth int, _s string) error {
+func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
     l.now = time.Now() // get this early.
     if l.flag&LUTC != 0 {
         l.now = l.now.UTC()
     }
     ws := getWriterState(l.out)
-    ws.mutex.Lock()
-    defer ws.mutex.Unlock()
-    s := []byte(_s)
+    if !haveLock {
+        ws.mutex.Lock()
+        defer ws.mutex.Unlock()
+    }
+    if l.isClosed {
+        return nil
+    }
     if l.isAutoNewlineEnabled() && len(s) > 0 && s[len(s)-1] != byteNewline {
         s = append(s, byteNewline)
     }
@@ -791,74 +816,77 @@ func (l *Logger) Output(calldepth int, _s string) error {
     return nil
 }
 
+func (l *Logger) truncateBuf() {
+    l.buf = l.buf[:0]
+    l.cursorByteIndex = 0
+}
+
 // Printf calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Printf.
 func (l *Logger) Printf(format string, v ...interface{}) {
-    l.Output(2, fmt.Sprintf(l.applyColorTemplates(format), v...))
+    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, false), v...)), false)
 }
 
 // Print calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Print.
-func (l *Logger) Print(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprint(v...))) }
-
-func (l *Logger) truncateBuf() {
-    ws := getWriterState(l.out)
-    ws.mutex.Lock()
-    l.buf = l.buf[:0]
-    l.cursorByteIndex = 0
-    ws.mutex.Unlock()
-}
+func (l *Logger) Print(v ...interface{}) { l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), false)), false) }
 
 func (l *Logger) Replacef(format string, v ...interface{}) {
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.truncateBuf()
-    l.Output(2, fmt.Sprintf(l.applyColorTemplates(format), v...))
+    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, true), v...)), true)
 }
 
 func (l *Logger) Replace(v ...interface{}) {
+    ws := getWriterState(l.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     l.truncateBuf()
-    l.Output(2, l.applyColorTemplates(fmt.Sprint(v...)))
+    l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), true)), true)
 }
 
-// Println calls l.Output to print to the logger.
+// Println calls l.intOutput to print to the logger.
 // Arguments are handled in the manner of fmt.Println.
-func (l *Logger) Println(v ...interface{}) { l.Output(2, l.applyColorTemplates(fmt.Sprintln(v...))) }
+func (l *Logger) Println(v ...interface{}) { l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprintln(v...), false)), false) }
 
 // Fatal is equivalent to l.Print() followed by a call to os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
-    l.Output(2, l.applyColorTemplates(fmt.Sprint(v...)))
+    l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), false)), false)
     os.Exit(1)
 }
 
 // Fatalf is equivalent to l.Printf() followed by a call to os.Exit(1).
 func (l *Logger) Fatalf(format string, v ...interface{}) {
-    l.Output(2, fmt.Sprintf(l.applyColorTemplates(format), v...))
+    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, false), v...)), false)
     os.Exit(1)
 }
 
 // Fatalln is equivalent to l.Println() followed by a call to os.Exit(1).
 func (l *Logger) Fatalln(v ...interface{}) {
-    l.Output(2, l.applyColorTemplates(fmt.Sprintln(v...)))
+    l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprintln(v...), false)), false)
     os.Exit(1)
 }
 
 // Panic is equivalent to l.Print() followed by a call to panic().
 func (l *Logger) Panic(v ...interface{}) {
-    s := l.applyColorTemplates(fmt.Sprint(v...))
-    l.Output(2, s)
+    s := l.applyColorTemplates(fmt.Sprint(v...), false)
+    l.intOutput(2, []byte(s), false)
     panic(s)
 }
 
 // Panicf is equivalent to l.Printf() followed by a call to panic().
 func (l *Logger) Panicf(format string, v ...interface{}) {
-    s := fmt.Sprintf(l.applyColorTemplates(format), v...)
-    l.Output(2, s)
+    s := fmt.Sprintf(l.applyColorTemplates(format, false), v...)
+    l.intOutput(2, []byte(s), false)
     panic(s)
 }
 
 // Panicln is equivalent to l.Println() followed by a call to panic().
 func (l *Logger) Panicln(v ...interface{}) {
-    s := l.applyColorTemplates(fmt.Sprintln(v...))
-    l.Output(2, s)
+    s := l.applyColorTemplates(fmt.Sprintln(v...), false)
+    l.intOutput(2, []byte(s), false)
     panic(s)
 }
 
@@ -896,21 +924,35 @@ func (l *Logger) SetPrefix(prefix string) {
 }
 
 func (l *Logger) Write(p []byte) (n int, err error) {
-    err = l.Output(2, string(p))
+    err = l.intOutput(2, p, false)
     return len(p), err
 }
 
-func (l *Logger) Close() {
+func (l *Logger) flushInt() {
+    if len(l.buf) > 0 {
+       l.intOutput(2, []byte("\n"), true)
+    }
+}
+
+func (l *Logger) closeInt() {
+    l.isClosed = true
+}
+
+func (l *Logger) Flush() {
     ws := getWriterState(l.out)
     ws.mutex.Lock()
     if len(l.buf) > 0 {
         ws.mutex.Unlock()
-        l.Output(2, "\n")
+        l.intOutput(2, []byte("\n"), false)
     } else {
         ws.mutex.Unlock()
     }
 }
 
+func (l *Logger) Close() {
+    l.Flush()
+    l.closeInt()
+}
 
 func (l *Logger) SetPartialLinesEnabled(flag bool) {
     ws := getWriterState(l.out)
@@ -960,7 +1002,7 @@ func (l *Logger) SetTerminalWidth(width int) {
     ws := getWriterState(l.out)
     ws.mutex.Lock()
     defer ws.mutex.Unlock()
-    getWriterState(l.out).closeAll()
+    getWriterState(l.out).flushAll()
     getWriterState(l.out).termWidth = width
 }
 
@@ -968,7 +1010,7 @@ func (l *Logger) SetMultilineEnabled(flag bool) {
     ws := getWriterState(l.out)
     ws.mutex.Lock()
     defer ws.mutex.Unlock()
-    getWriterState(l.out).closeAll()
+    getWriterState(l.out).flushAll()
     getWriterState(l.out).multiline = flag
 }
 func (l *Logger) EnableMultilineMode() { l.SetMultilineEnabled(true) }
@@ -984,7 +1026,7 @@ func (l *Logger) EnableSinglelineMode() { l.SetMultilineEnabled(false) }
 
 // SetOutput sets the output destination for the standard logger.
 func SetOutput(w io.Writer) {
-    std.Close()
+    std.Flush()
     ws := getWriterState(std.out)
     ws.mutex.Lock()
     defer ws.mutex.Unlock()
@@ -1016,67 +1058,73 @@ func SetPrefix(prefix string) {
 // Print calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Print.
 func Print(v ...interface{}) {
-    std.Output(2, std.applyColorTemplates(fmt.Sprint(v...)))
+    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), false)), false)
 }
 
 // Printf calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Printf.
 func Printf(format string, v ...interface{}) {
-    std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
+    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, false), v...)), false)
 }
 
 func Replace(v ...interface{}) {
+    ws := getWriterState(std.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     std.truncateBuf()
-    std.Output(2, std.applyColorTemplates(fmt.Sprint(v...)))
+    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), true)), true)
 }
 
 func Replacef(format string, v ...interface{}) {
+    ws := getWriterState(std.out)
+    ws.mutex.Lock()
+    defer ws.mutex.Unlock()
     std.truncateBuf()
-    std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
+    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, true), v...)), true)
 }
 
 // Println calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Println.
 func Println(v ...interface{}) {
-    std.Output(2, std.applyColorTemplates(fmt.Sprintln(v...)))
+    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprintln(v...), false)), false)
 }
 
 // Fatal is equivalent to Print() followed by a call to os.Exit(1).
 func Fatal(v ...interface{}) {
-    std.Output(2, std.applyColorTemplates(fmt.Sprint(v...)))
+    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), false)), false)
     os.Exit(1)
 }
 
 // Fatalf is equivalent to Printf() followed by a call to os.Exit(1).
 func Fatalf(format string, v ...interface{}) {
-    std.Output(2, fmt.Sprintf(std.applyColorTemplates(format), v...))
+    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, false), v...)), false)
     os.Exit(1)
 }
 
 // Fatalln is equivalent to Println() followed by a call to os.Exit(1).
 func Fatalln(v ...interface{}) {
-    std.Output(2, std.applyColorTemplates(fmt.Sprintln(v...)))
+    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprintln(v...), false)), false)
     os.Exit(1)
 }
 
 // Panic is equivalent to Print() followed by a call to panic().
 func Panic(v ...interface{}) {
-    s := std.applyColorTemplates(fmt.Sprint(v...))
-    std.Output(2, s)
+    s := std.applyColorTemplates(fmt.Sprint(v...), false)
+    std.intOutput(2, []byte(s), false)
     panic(s)
 }
 
 // Panicf is equivalent to Printf() followed by a call to panic().
 func Panicf(format string, v ...interface{}) {
-    s := fmt.Sprintf(std.applyColorTemplates(format), v...)
-    std.Output(2, s)
+    s := fmt.Sprintf(std.applyColorTemplates(format, false), v...)
+    std.intOutput(2, []byte(s), false)
     panic(s)
 }
 
 // Panicln is equivalent to Println() followed by a call to panic().
 func Panicln(v ...interface{}) {
-    s := std.applyColorTemplates(fmt.Sprintln(v...))
-    std.Output(2, s)
+    s := std.applyColorTemplates(fmt.Sprintln(v...), false)
+    std.intOutput(2, []byte(s), false)
     panic(s)
 }
 
@@ -1095,6 +1143,21 @@ func EnableSinglelineMode() { std.EnableSinglelineMode() }
 
 func AddAnsiCode(s string, code int) {
     ansiColorCodes[s] = code
+}
+
+func CloseAll() {
+    mutexGlobal.Lock()
+    _writers := []*WriterState{}
+    for _, ws := range writers {
+        _writers = append(_writers, ws)
+    }
+    mutexGlobal.Unlock()
+    for _, ws := range _writers {
+        ws.mutex.Lock()
+        // fmt.Printf("Clearing house.\n")
+        ws.closeAll()
+        ws.mutex.Unlock()
+    }
 }
 
 // Output writes the output for a logging event.  The string s contains

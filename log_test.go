@@ -307,12 +307,10 @@ func TestMultilineMode(t *testing.T) {
     var buf bytes.Buffer
     var writer1 = New(&buf, "", 0)
     writer1.EnableMultilineMode()
-    defer writer1.Close()
     writer1.Print("writer1...")
     assert.Equal("writer1...", buf.String())
     buf.Reset()
     var writer2 = New(&buf, "", 0)
-    defer writer2.Close()
     writer2.Print("writer2...")
     assert.Equal("\nwriter2...", buf.String())
     buf.Reset()
@@ -339,6 +337,16 @@ func TestMultilineMode(t *testing.T) {
     // going to write anything else immediately.
     assert.Equal("\033[1Fwriter1... working... 100 percent. done.     \033[1E", buf.String())
     buf.Reset()
+    writer1.Print("Hello")
+    assert.Equal("\nHello", buf.String())
+    buf.Reset()
+    writer1.Close()
+    assert.Equal("\x1b[1FHello           \x1b[1Eworking again...", buf.String())
+    buf.Reset()
+    writer2.Close()
+    assert.Equal("\n", buf.String())
+    buf.Reset()
+
 }
 
 func TestAutoNewlines(t *testing.T) {
