@@ -284,7 +284,7 @@ func New(out io.Writer, prefix string, flag int) *Logger {
 func newStd() *Logger {
     var l = &Logger{out: os.Stderr, prefix: []byte{}, flag: LstdFlags}
     l.partialLinesEnabled = &yes
-    l.colorRegexp = regexp.MustCompile("@\\[([\\w,]+?)(:([^)]*?))?\\]")
+    l.colorRegexp = regexp.MustCompile("@\\(([\\w,]+?)(:([^)]*?))?\\)")
     l.colorEnabled = &yes
     l.colorTemplateEnabled = &no
     l.autoAppendNewline = &no
