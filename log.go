@@ -667,15 +667,8 @@ func processColorTemplates(colorTemplateRegexp *regexp.Regexp, buf []byte) []byt
     return colorTemplateRegexp.ReplaceAllFunc(buf, colorTemplateReplacer)
 }
 
-func (l *Logger) applyColorTemplates(s string, haveLock bool) string {
-    ws := getWriterState(l.out)
-    if !haveLock {
-        ws.lock()
-    }
+func (l *Logger) applyColorTemplates(s string) string {
     colorTemplateRegexp := l.getColorTemplateRegexp()
-    if !haveLock {
-        ws.unlock()
-    }
     if colorTemplateRegexp != nil {
         return string(processColorTemplates(colorTemplateRegexp, []byte(s)))
     } else {
@@ -841,19 +834,22 @@ func (l *Logger) truncateBuf() {
 // Printf calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Printf.
 func (l *Logger) Printf(format string, v ...interface{}) {
-    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, false), v...)), false)
+    ws := getWriterState(l.out)
+    ws.lock()
+    defer ws.unlock()
+    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format), v...)), true)
 }
 
 // Print calls l.Output to print to the logger.
 // Arguments are handled in the manner of fmt.Print.
-func (l *Logger) Print(v ...interface{}) { l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), false)), false) }
+func (l *Logger) Print(v ...interface{}) { l.intOutput(2, []byte(fmt.Sprint(v...)), false) }
 
 func (l *Logger) Replacef(format string, v ...interface{}) {
     ws := getWriterState(l.out)
     ws.lock()
     defer ws.unlock()
     l.truncateBuf()
-    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, true), v...)), true)
+    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format), v...)), true)
 }
 
 func (l *Logger) Replace(v ...interface{}) {
@@ -861,48 +857,54 @@ func (l *Logger) Replace(v ...interface{}) {
     ws.lock()
     defer ws.unlock()
     l.truncateBuf()
-    l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), true)), true)
+    l.intOutput(2, []byte(fmt.Sprint(v...)), true)
 }
 
 // Println calls l.intOutput to print to the logger.
 // Arguments are handled in the manner of fmt.Println.
-func (l *Logger) Println(v ...interface{}) { l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprintln(v...), false)), false) }
+func (l *Logger) Println(v ...interface{}) { l.intOutput(2, []byte(fmt.Sprintln(v...)), false) }
 
 // Fatal is equivalent to l.Print() followed by a call to os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
-    l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), false)), false)
+    l.intOutput(2, []byte(fmt.Sprint(v...)), false)
     osExit()
 }
 
 // Fatalf is equivalent to l.Printf() followed by a call to os.Exit(1).
 func (l *Logger) Fatalf(format string, v ...interface{}) {
-    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, false), v...)), false)
+    ws := getWriterState(l.out)
+    ws.lock()
+    l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format), v...)), true)
+    ws.unlock()
     osExit()
 }
 
 // Fatalln is equivalent to l.Println() followed by a call to os.Exit(1).
 func (l *Logger) Fatalln(v ...interface{}) {
-    l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprintln(v...), false)), false)
+    l.intOutput(2, []byte(fmt.Sprintln(v...)), false)
     osExit()
 }
 
 // Panic is equivalent to l.Print() followed by a call to panic().
 func (l *Logger) Panic(v ...interface{}) {
-    s := l.applyColorTemplates(fmt.Sprint(v...), false)
+    s := fmt.Sprint(v...)
     l.intOutput(2, []byte(s), false)
     panic(s)
 }
 
 // Panicf is equivalent to l.Printf() followed by a call to panic().
 func (l *Logger) Panicf(format string, v ...interface{}) {
-    s := fmt.Sprintf(l.applyColorTemplates(format, false), v...)
-    l.intOutput(2, []byte(s), false)
+    ws := getWriterState(l.out)
+    ws.lock()
+    s := fmt.Sprintf(l.applyColorTemplates(format), v...)
+    l.intOutput(2, []byte(s), true)
+    ws.unlock()
     panic(s)
 }
 
 // Panicln is equivalent to l.Println() followed by a call to panic().
 func (l *Logger) Panicln(v ...interface{}) {
-    s := l.applyColorTemplates(fmt.Sprintln(v...), false)
+    s := fmt.Sprintln(v...)
     l.intOutput(2, []byte(s), false)
     panic(s)
 }
@@ -1074,13 +1076,16 @@ func SetPrefix(prefix string) {
 // Print calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Print.
 func Print(v ...interface{}) {
-    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), false)), false)
+    std.intOutput(2, []byte(fmt.Sprint(v...)), false)
 }
 
 // Printf calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Printf.
 func Printf(format string, v ...interface{}) {
-    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, false), v...)), false)
+    ws := getWriterState(std.out)
+    ws.lock()
+    defer ws.unlock()
+    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format), v...)), true)
 }
 
 func Replace(v ...interface{}) {
@@ -1088,7 +1093,7 @@ func Replace(v ...interface{}) {
     ws.lock()
     defer ws.unlock()
     std.truncateBuf()
-    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), true)), true)
+    std.intOutput(2, []byte(fmt.Sprint(v...)), true)
 }
 
 func Replacef(format string, v ...interface{}) {
@@ -1096,50 +1101,56 @@ func Replacef(format string, v ...interface{}) {
     ws.lock()
     defer ws.unlock()
     std.truncateBuf()
-    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, true), v...)), true)
+    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format), v...)), true)
 }
 
 // Println calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Println.
 func Println(v ...interface{}) {
-    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprintln(v...), false)), false)
+    std.intOutput(2, []byte(fmt.Sprintln(v...)), false)
 }
 
 // Fatal is equivalent to Print() followed by a call to os.Exit(1).
 func Fatal(v ...interface{}) {
-    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), false)), false)
+    std.intOutput(2, []byte(fmt.Sprint(v...)), false)
     osExit()
 }
 
 // Fatalf is equivalent to Printf() followed by a call to os.Exit(1).
 func Fatalf(format string, v ...interface{}) {
-    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, false), v...)), false)
+    ws := getWriterState(std.out)
+    ws.lock()
+    std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format), v...)), true)
+    ws.unlock()
     osExit()
 }
 
 // Fatalln is equivalent to Println() followed by a call to os.Exit(1).
 func Fatalln(v ...interface{}) {
-    std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprintln(v...), false)), false)
+    std.intOutput(2, []byte(fmt.Sprintln(v...)), false)
     osExit()
 }
 
 // Panic is equivalent to Print() followed by a call to panic().
 func Panic(v ...interface{}) {
-    s := std.applyColorTemplates(fmt.Sprint(v...), false)
+    s := fmt.Sprint(v...)
     std.intOutput(2, []byte(s), false)
     panic(s)
 }
 
 // Panicf is equivalent to Printf() followed by a call to panic().
 func Panicf(format string, v ...interface{}) {
-    s := fmt.Sprintf(std.applyColorTemplates(format, false), v...)
-    std.intOutput(2, []byte(s), false)
+    ws := getWriterState(std.out)
+    ws.lock()
+    s := fmt.Sprintf(std.applyColorTemplates(format), v...)
+    std.intOutput(2, []byte(s), true)
+    ws.unlock()
     panic(s)
 }
 
 // Panicln is equivalent to Println() followed by a call to panic().
 func Panicln(v ...interface{}) {
-    s := std.applyColorTemplates(fmt.Sprintln(v...), false)
+    s := fmt.Sprintln(v...)
     std.intOutput(2, []byte(s), false)
     panic(s)
 }
