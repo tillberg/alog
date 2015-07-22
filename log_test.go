@@ -179,8 +179,8 @@ func TestDisableColor(t *testing.T) {
 func TestAddColorCode(t *testing.T) {
     assert := assert.New(t)
     var buf bytes.Buffer
-    AddAnsiCode("awesome", 1)
-    AddAnsiCode("sauce", 36)
+    AddAnsiColorCode("awesome", 1)
+    AddAnsiColorCode("sauce", 36)
     var writer = New(&buf, "@(awesome,sauce:$$) ", 0)
     defer writer.Close()
     writer.EnableColorTemplate()

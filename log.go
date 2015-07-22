@@ -1168,7 +1168,7 @@ func SetTerminalWidth(width int) { std.SetTerminalWidth(width) }
 func EnableMultilineMode() { std.EnableMultilineMode() }
 func EnableSinglelineMode() { std.EnableSinglelineMode() }
 
-func AddAnsiCode(s string, code int) {
+func AddAnsiColorCode(s string, code int) {
     ansiColorCodes[s] = code
 }
 
