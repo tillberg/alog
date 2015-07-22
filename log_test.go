@@ -398,6 +398,8 @@ func TestFlagElapsed(t *testing.T) {
 
 func TestFormatDuration(t *testing.T) {
     assert := assert.New(t)
+    assert.Equal("0.0ms", string(formatDuration(     0 * time.Microsecond)))
+    assert.Equal("0.1ms", string(formatDuration(    50 * time.Microsecond)))
     assert.Equal("0.1ms", string(formatDuration(   100 * time.Microsecond)))
     assert.Equal("0.5ms", string(formatDuration(   500 * time.Microsecond)))
     assert.Equal("1.0ms", string(formatDuration(  1000 * time.Microsecond)))
