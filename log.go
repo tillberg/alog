@@ -111,22 +111,34 @@ func (w *WriterState) flushAll() {
     }
 }
 
+func (w *WriterState) closeAll() {
+    for _, logger := range w.tempLoggers {
+        logger.flushInt()
+        logger.closeInt()
+    }
+}
+
 func getWriterState(writer io.Writer) *WriterState {
-    mutexGlobal.Lock()
-    defer mutexGlobal.Unlock()
+    mutexGlobal.RLock()
     ws, ok := writers[writer]
+    mutexGlobal.RUnlock()
     if !ok {
-        ws = &WriterState{}
-        ws.cursorIsAtBegin = true
-        ws.cursorIsInline = false
-        ws.lastTemp = [][]byte{[]byte{}}
-        writers[writer] = ws
+        mutexGlobal.Lock()
+        ws, ok = writers[writer]
+        if !ok {
+            ws = &WriterState{}
+            ws.cursorIsAtBegin = true
+            ws.cursorIsInline = false
+            ws.lastTemp = [][]byte{[]byte{}}
+            writers[writer] = ws
+        }
+        mutexGlobal.Unlock()
     }
     return ws
 }
 
 // ensures atomic writes; shared by all Logger instances
-var mutexGlobal sync.Mutex
+var mutexGlobal sync.RWMutex
 var loggers []*Logger
 var writers map[io.Writer]*WriterState = make(map[io.Writer]*WriterState)
 
@@ -859,19 +871,19 @@ func (l *Logger) Println(v ...interface{}) { l.intOutput(2, []byte(l.applyColorT
 // Fatal is equivalent to l.Print() followed by a call to os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
     l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprint(v...), false)), false)
-    os.Exit(1)
+    osExit()
 }
 
 // Fatalf is equivalent to l.Printf() followed by a call to os.Exit(1).
 func (l *Logger) Fatalf(format string, v ...interface{}) {
     l.intOutput(2, []byte(fmt.Sprintf(l.applyColorTemplates(format, false), v...)), false)
-    os.Exit(1)
+    osExit()
 }
 
 // Fatalln is equivalent to l.Println() followed by a call to os.Exit(1).
 func (l *Logger) Fatalln(v ...interface{}) {
     l.intOutput(2, []byte(l.applyColorTemplates(fmt.Sprintln(v...), false)), false)
-    os.Exit(1)
+    osExit()
 }
 
 // Panic is equivalent to l.Print() followed by a call to panic().
@@ -951,7 +963,10 @@ func (l *Logger) Flush() {
 }
 
 func (l *Logger) Close() {
-    l.Flush()
+    ws := getWriterState(l.out)
+    ws.lock()
+    defer ws.unlock()
+    l.flushInt()
     l.closeInt()
 }
 
@@ -1093,19 +1108,19 @@ func Println(v ...interface{}) {
 // Fatal is equivalent to Print() followed by a call to os.Exit(1).
 func Fatal(v ...interface{}) {
     std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprint(v...), false)), false)
-    os.Exit(1)
+    osExit()
 }
 
 // Fatalf is equivalent to Printf() followed by a call to os.Exit(1).
 func Fatalf(format string, v ...interface{}) {
     std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format, false), v...)), false)
-    os.Exit(1)
+    osExit()
 }
 
 // Fatalln is equivalent to Println() followed by a call to os.Exit(1).
 func Fatalln(v ...interface{}) {
     std.intOutput(2, []byte(std.applyColorTemplates(fmt.Sprintln(v...), false)), false)
-    os.Exit(1)
+    osExit()
 }
 
 // Panic is equivalent to Print() followed by a call to panic().
@@ -1144,6 +1159,21 @@ func EnableSinglelineMode() { std.EnableSinglelineMode() }
 
 func AddAnsiCode(s string, code int) {
     ansiColorCodes[s] = code
+}
+
+func osExit() {
+    // Lock everything and hold the locks permanently. Close (and flush) all Loggers,
+    // then exit with error code 1.
+    // We only hold an RLock on the global mutex to prevent new Loggers from being
+    // added (and mutating the writers map) before we exit. And because use Lock
+    // would result in a deadlock when we try to RLock during a flush operation when
+    // we try to call getWriterState()
+    mutexGlobal.RLock()
+    for _, ws := range writers {
+        ws.lock()
+        ws.closeAll()
+    }
+    os.Exit(1)
 }
 
 // Output writes the output for a logging event.  The string s contains
