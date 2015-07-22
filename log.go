@@ -114,7 +114,8 @@ func getWriterState(writer io.Writer) *WriterState {
     ws, ok := writers[writer]
     if !ok {
         ws = &WriterState{}
-        ws.cursorIsInline = true
+        ws.cursorIsAtBegin = true
+        ws.cursorIsInline = false
         ws.lastTemp = [][]byte{[]byte{}}
         writers[writer] = ws
     }
@@ -434,6 +435,7 @@ func moveCursorToLine(out io.Writer, line int) bool {
     out.Write(tmp)
     ws.cursorLineIndex = line
     ws.cursorIsAtBegin = true
+    ws.cursorIsInline = false
     return true
 }
 
@@ -485,7 +487,8 @@ func writeLine(out io.Writer, buf []byte) {
     } else {
         out.Write(bytesNewline)
         ws.lastTemp[0] = bytesEmpty
-        ws.cursorIsInline = true
+        ws.cursorIsAtBegin = true
+        ws.cursorIsInline = false
     }
 }
 
@@ -501,7 +504,8 @@ func updateTempOutput(out io.Writer) {
             moveCursorToLine(out, i - 1)
             out.Write(bytesNewline)
             ws.cursorLineIndex = i
-            ws.cursorIsInline = true
+            ws.cursorIsAtBegin = true
+            ws.cursorIsInline = false
             ws.lastTemp = append(ws.lastTemp, []byte{})
         }
         for i, buf := range bufs {
