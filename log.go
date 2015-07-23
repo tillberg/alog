@@ -947,6 +947,13 @@ func (l *Logger) Write(p []byte) (n int, err error) {
     return len(p), err
 }
 
+func (l *Logger) Colorify(s string) string {
+    ws := getWriterState(l.out)
+    ws.lock()
+    defer ws.unlock()
+    return l.applyColorTemplates(s)
+}
+
 func (l *Logger) flushInt() {
     if len(l.buf) > 0 {
        l.intOutput(2, []byte("\n"), true)
@@ -1167,6 +1174,7 @@ func SetColorTemplateRegexp(rgx *regexp.Regexp) { std.SetColorTemplateRegexp(rgx
 func SetTerminalWidth(width int) { std.SetTerminalWidth(width) }
 func EnableMultilineMode() { std.EnableMultilineMode() }
 func EnableSinglelineMode() { std.EnableSinglelineMode() }
+func Colorify(s string) string { return std.Colorify(s) }
 
 func AddAnsiColorCode(s string, code int) {
     ansiColorCodes[s] = code
