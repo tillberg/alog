@@ -889,6 +889,7 @@ func (l *Logger) Fatalln(v ...interface{}) {
 func (l *Logger) Panic(v ...interface{}) {
     s := fmt.Sprint(v...)
     l.intOutput(2, []byte(s), false)
+    l.flushInt()
     panic(s)
 }
 
@@ -898,6 +899,7 @@ func (l *Logger) Panicf(format string, v ...interface{}) {
     ws.lock()
     s := fmt.Sprintf(l.applyColorTemplates(format), v...)
     l.intOutput(2, []byte(s), true)
+    l.flushInt()
     ws.unlock()
     panic(s)
 }
@@ -1142,6 +1144,7 @@ func Fatalln(v ...interface{}) {
 func Panic(v ...interface{}) {
     s := fmt.Sprint(v...)
     std.intOutput(2, []byte(s), false)
+    std.flushInt()
     panic(s)
 }
 
@@ -1151,6 +1154,7 @@ func Panicf(format string, v ...interface{}) {
     ws.lock()
     s := fmt.Sprintf(std.applyColorTemplates(format), v...)
     std.intOutput(2, []byte(s), true)
+    std.flushInt()
     ws.unlock()
     panic(s)
 }
