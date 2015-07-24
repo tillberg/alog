@@ -443,3 +443,4 @@ func TestLoggerInception(t *testing.T) {
 
 // TODO test &/or implement:
 // - Set custom ANSI template regexp specifically or globally
+// - Handle \b and \t characters intelligently

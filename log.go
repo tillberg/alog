@@ -29,6 +29,7 @@ import (
     "regexp"
     "runtime"
     "strconv"
+    "strings"
     "sync"
     "syscall"
     "time"
@@ -911,6 +912,34 @@ func (l *Logger) Panicln(v ...interface{}) {
     panic(s)
 }
 
+func (l *Logger) Bail(err error) {
+    // This works best if l.out == os.Stderr, but it should kind of work regardless
+    ws := getWriterState(l.out)
+    ws.lock()
+    l.flushInt()
+    size := 4096
+    for {
+        buf := make([]byte, size)
+        bytesWritten := runtime.Stack(buf, false)
+        if bytesWritten == size {
+            size *= 2
+            continue
+        }
+        stackTrace := strings.TrimSpace(string(buf[:bytesWritten]))
+        lines := strings.Split(stackTrace, "\n")
+        for i, line := range lines {
+            // Try to cut out the Bail() call from the stack trace:
+            if (i == 1 || i == 3) && strings.Contains(line, "ansi-log.(*Logger).Bail") { continue }
+            if (i == 2 || i == 4) && strings.Contains(line, "tillberg/ansi-log/log.go") { continue }
+            l.intOutput(2, []byte(line + "\n"), true)
+        }
+        break
+    }
+    l.intOutput(2, []byte(fmt.Sprintf("Bailed due to error: %s\n", err)), true)
+    ws.unlock()
+    osExit()
+}
+
 // Flags returns the output flags for the logger.
 func (l *Logger) Flags() int {
     ws := getWriterState(l.out)
@@ -1164,6 +1193,10 @@ func Panicln(v ...interface{}) {
     s := fmt.Sprintln(v...)
     std.intOutput(2, []byte(s), false)
     panic(s)
+}
+
+func Bail(err error) {
+    std.Bail(err)
 }
 
 func ShowPartialLines() { std.ShowPartialLines() }
