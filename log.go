@@ -26,6 +26,7 @@ import (
     "fmt"
     "io"
     "os"
+    "os/exec"
     "regexp"
     "runtime"
     "strconv"
@@ -72,6 +73,20 @@ var ansiColorCodes = map[string]int{
     "cyan":    36,
     "white":   37,
     "cr":      39,
+}
+
+var tputCache = make(map[string]string)
+func tput(strs ...string) string {
+    key := strings.Join(strs, "-")
+    val, ok := tputCache[key]
+    if !ok {
+        cmd := exec.Command("tput", strs...)
+        out, err := cmd.Output()
+        if err != nil { fmt.Printf("\nloadEscape(%q) -> %#v", key, err); os.Exit(1) }
+        val = string(out)
+        tputCache[key] = val
+    }
+    return val
 }
 
 type WriterState struct {
@@ -158,8 +173,6 @@ var ansiColorRegexp = regexp.MustCompile("\033\\[(\\d+)m")
 var ansiColorOrCharRegexp = regexp.MustCompile("(\033\\[\\d+m)|.")
 var ansiBytesEscapeStart = []byte("\033[")
 var ansiBytesColorEscapeEnd = []byte("m")
-var ansiBytesMoveCursorPrevLinesEnd = []byte("F")
-var ansiBytesMoveCursorNextLinesEnd = []byte("E")
 var ansiBytesResetAll = []byte("\033[0m")
 var ansiBytesResetForecolor = []byte("\033[39m")
 
@@ -441,13 +454,16 @@ func moveCursorToLine(out io.Writer, line int) bool {
         return false
     }
     tmp := ansiBytesEscapeStart
-    if line < ws.cursorLineIndex {
-        tmp = append(tmp, fmt.Sprintf("%d", ws.cursorLineIndex - line)...)
-        tmp = append(tmp, ansiBytesMoveCursorPrevLinesEnd...)
-    } else {
-        tmp = append(tmp, fmt.Sprintf("%d", line - ws.cursorLineIndex)...)
-        tmp = append(tmp, ansiBytesMoveCursorNextLinesEnd...)
+    for line != ws.cursorLineIndex {
+        if line < ws.cursorLineIndex {
+            tmp = append(tmp, tput("cuu", "1")...)
+            ws.cursorLineIndex--
+        } else {
+            tmp = append(tmp, tput("cud", "1")...)
+            ws.cursorLineIndex++
+        }
     }
+    tmp = append(tmp, bytesCarriageReturn...)
     out.Write(tmp)
     ws.cursorLineIndex = line
     ws.cursorIsAtBegin = true
