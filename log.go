@@ -775,7 +775,8 @@ func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
             currLine = l.buf[:indexNewline]
         }
         indexCr := bytes.IndexByte(currLine, '\r')
-        if indexCr != -1 {
+        // Kludge: ignore carriage return just before newline:
+        if indexCr != -1  && indexCr != indexNewline - 1 {
             // For every carriage return found within the current line, detach the text
             // after the carriage return and inject at the beginning of the line.
             after := l.buf[indexCr+1:]
@@ -787,7 +788,7 @@ func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
         if indexNewline == -1 {
             break
         }
-        l.buf = l.buf[indexNewline+1:] // Is this super-inefficient? i.e. leaking memory?
+        l.buf = l.buf[indexNewline+1:]
         l.cursorByteIndex -= indexNewline + 1
         if l.flag&(Lshortfile|Llongfile) != 0 && len(l.callerFile) == 0 {
             // release lock while getting caller info - it's expensive.
@@ -1018,12 +1019,13 @@ func (l *Logger) Flush() {
     l.flushInt()
 }
 
-func (l *Logger) Close() {
+func (l *Logger) Close() error {
     ws := getWriterState(l.out)
     ws.lock()
     defer ws.unlock()
     l.flushInt()
     l.closeInt()
+    return nil
 }
 
 func (l *Logger) SetPartialLinesEnabled(flag bool) {
