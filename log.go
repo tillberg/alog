@@ -761,6 +761,8 @@ func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
     if l.isClosed {
         return errors.New("Attempted to write to closed Logger.")
     }
+    // This is kind of kludgy, but better than nothing:
+    s = []byte(strings.Replace(string(s), "\t", "        ", -1))
     if l.isAutoNewlineEnabled() && len(s) > 0 && s[len(s)-1] != byteNewline {
         s = append(s, byteNewline)
     }
