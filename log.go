@@ -815,23 +815,23 @@ func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
                 ws.lock()
             }
         }
-        ansiActive := getActiveAnsiCodes(currLine)
+        // ansiActive := getActiveAnsiCodes(currLine)
         ws.removeTempLogger(l)
         l.tempLineActive = false
         writeLine(l.out, l.getFormattedLine(currLine))
         wroteFullLine = true
-        // XXX This is probably inefficient?:
-        prepends := []byte{}
-        if ansiActive.intensity != 0 {
-            prepends = append(prepends, ansiEscapeBytes(ansiActive.intensity)...)
-        }
-        if ansiActive.forecolor != 0 {
-            prepends = append(prepends, ansiEscapeBytes(ansiActive.forecolor)...)
-        }
-        if len(prepends) > 0 {
-            l.buf = append(prepends, l.buf...)
-            l.cursorByteIndex += len(prepends)
-        }
+        // // XXX This is probably inefficient?:
+        // prepends := []byte{}
+        // if ansiActive.intensity != 0 {
+        //     prepends = append(prepends, ansiEscapeBytes(ansiActive.intensity)...)
+        // }
+        // if ansiActive.forecolor != 0 {
+        //     prepends = append(prepends, ansiEscapeBytes(ansiActive.forecolor)...)
+        // }
+        // if len(prepends) > 0 {
+        //     l.buf = append(prepends, l.buf...)
+        //     l.cursorByteIndex += len(prepends)
+        // }
     }
     if (wroteFullLine) {
         l.callerFile = ""
