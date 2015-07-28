@@ -453,7 +453,7 @@ func moveCursorToLine(out io.Writer, line int) bool {
     if line == ws.cursorLineIndex {
         return false
     }
-    tmp := ansiBytesEscapeStart
+    tmp := []byte{}
     for line != ws.cursorLineIndex {
         if line < ws.cursorLineIndex {
             tmp = append(tmp, tput("cuu", "1")...)
