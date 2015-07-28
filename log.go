@@ -954,7 +954,7 @@ func (l *Logger) Bail(err error) {
         }
         break
     }
-    l.intOutput(2, []byte(fmt.Sprintf("Bailed due to error: %s\n", err)), true)
+    l.intOutput(2, []byte(fmt.Sprintf("Bailed due to error: %s\n", err.Error())), true)
     ws.unlock()
     osExit()
 }
