@@ -49,14 +49,15 @@ const (
 	//  2009/01/23 01:23:23 message
 	// while flags Ldate | Ltime | Lmicroseconds | Llongfile produce,
 	//  2009/01/23 01:23:23.123123 /a/b/c/d.go:23: message
-	Ldate         = 1 << iota     // the date in the local time zone: 2009/01/23
-	Ltime                         // the time in the local time zone: 01:23:23
-	Lmicroseconds                 // microsecond resolution: 01:23:23.123123.  assumes Ltime.
-	Llongfile                     // full file name and line number: /a/b/c/d.go:23
-	Lshortfile                    // final file name element and line number: d.go:23. overrides Llongfile
-	LUTC                          // if Ldate or Ltime is set, use UTC rather than the local time zone
-	Lelapsed                      // elapsed time since this line was first started
-	LstdFlags     = Ldate | Ltime // initial values for the standard logger
+	Ldate         = 1 << iota // the date in the local time zone: 2009/01/23
+	Ltime                     // the time in the local time zone: 01:23:23
+	Lmicroseconds             // microsecond resolution: 01:23:23.123123.  assumes Ltime.
+	Llongfile                 // full file name and line number: /a/b/c/d.go:23
+	Lshortfile                // final file name element and line number: d.go:23. overrides Llongfile
+	LUTC                      // if Ldate or Ltime is set, use UTC rather than the local time zone
+	Lelapsed                  // elapsed time since this line was first started
+	LisoDate
+	LstdFlags = Ldate | Ltime // initial values for the standard logger
 )
 
 var ansiColorCodes = map[string]int{
@@ -419,17 +420,23 @@ func formatDuration(duration time.Duration) []byte {
 
 func (l *Logger) formatHeader(buf *[]byte) {
 	*buf = append(*buf, l.prefixFormatted...)
-	if l.flag&(Ldate|Ltime|Lmicroseconds) != 0 {
-		if l.flag&Ldate != 0 {
+	if l.flag&(Ldate|Ltime|Lmicroseconds|LisoDate) != 0 {
+		dateSep := "/"
+		datetimeSep := " "
+		if l.flag&LisoDate != 0 {
+			dateSep = "-"
+			datetimeSep = "T"
+		}
+		if l.flag&(Ldate|LisoDate) != 0 {
 			year, month, day := l.now.Date()
 			itoa(buf, year, 4)
-			*buf = append(*buf, '/')
+			*buf = append(*buf, dateSep...)
 			itoa(buf, int(month), 2)
-			*buf = append(*buf, '/')
+			*buf = append(*buf, dateSep...)
 			itoa(buf, day, 2)
-			*buf = append(*buf, ' ')
+			*buf = append(*buf, datetimeSep...)
 		}
-		if l.flag&(Ltime|Lmicroseconds) != 0 {
+		if l.flag&(Ltime|Lmicroseconds|LisoDate) != 0 {
 			hour, min, sec := l.now.Clock()
 			itoa(buf, hour, 2)
 			*buf = append(*buf, ':')
@@ -440,6 +447,9 @@ func (l *Logger) formatHeader(buf *[]byte) {
 				*buf = append(*buf, '.')
 				itoa(buf, l.now.Nanosecond()/1e3, 6)
 			}
+			if l.flag&LisoDate != 0 {
+				*buf = append(*buf, 'Z')
+			}
 			*buf = append(*buf, ' ')
 		}
 	}
@@ -449,7 +459,7 @@ func (l *Logger) formatHeader(buf *[]byte) {
 		itoa(buf, l.callerLine, -1)
 		*buf = append(*buf, ": "...)
 	}
-	if l.flag&Lelapsed != 0 && l.now != l.lineStartTime {
+	if l.flag&Lelapsed != 0 && !l.lineStartTime.IsZero() && l.now != l.lineStartTime {
 		*buf = append(*buf, "("...)
 		*buf = append(*buf, formatDuration(l.now.Sub(l.lineStartTime))...)
 		*buf = append(*buf, ") "...)
