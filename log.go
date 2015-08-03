@@ -374,7 +374,7 @@ func itoa(buf *[]byte, i int, wid int) {
 	*buf = append(*buf, b[bp:]...)
 }
 
-func formatDuration(duration time.Duration) []byte {
+func FormatDuration(duration time.Duration) []byte {
 	tmp := []byte{}
 	secs := duration.Seconds()
 	if secs >= 600 {
@@ -453,7 +453,7 @@ func (l *Logger) appendIsoDate(buf *[]byte, includeMicros bool) {
 
 func (l *Logger) appendElapsed(buf *[]byte) {
 	if !l.lineStartTime.IsZero() && l.now != l.lineStartTime {
-		*buf = append(*buf, formatDuration(l.now.Sub(l.lineStartTime))...)
+		*buf = append(*buf, FormatDuration(l.now.Sub(l.lineStartTime))...)
 	} else {
 		*buf = append(*buf, '-')
 	}
