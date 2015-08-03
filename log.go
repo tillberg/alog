@@ -418,38 +418,59 @@ func formatDuration(duration time.Duration) []byte {
 	return tmp
 }
 
+func (l *Logger) appendDate(buf *[]byte, useIsoDate bool) {
+	dateSep := "/"
+	if useIsoDate {
+		dateSep = "-"
+	}
+	year, month, day := l.now.Date()
+	itoa(buf, year, 4)
+	*buf = append(*buf, dateSep...)
+	itoa(buf, int(month), 2)
+	*buf = append(*buf, dateSep...)
+	itoa(buf, day, 2)
+}
+
+func (l *Logger) appendTime(buf *[]byte, includeMicros bool) {
+	hour, min, sec := l.now.Clock()
+	itoa(buf, hour, 2)
+	*buf = append(*buf, ':')
+	itoa(buf, min, 2)
+	*buf = append(*buf, ':')
+	itoa(buf, sec, 2)
+	if includeMicros {
+		*buf = append(*buf, '.')
+		itoa(buf, l.now.Nanosecond()/1e3, 6)
+	}
+}
+
+func (l *Logger) appendIsoDate(buf *[]byte, includeMicros bool) {
+	l.appendDate(buf, true)
+	*buf = append(*buf, 'T')
+	l.appendTime(buf, includeMicros)
+	*buf = append(*buf, 'Z')
+}
+
+func (l *Logger) appendElapsed(buf *[]byte) {
+	if !l.lineStartTime.IsZero() && l.now != l.lineStartTime {
+		*buf = append(*buf, formatDuration(l.now.Sub(l.lineStartTime))...)
+	} else {
+		*buf = append(*buf, '-')
+	}
+}
+
 func (l *Logger) formatHeader(buf *[]byte) {
 	*buf = append(*buf, l.prefixFormatted...)
-	if l.flag&(Ldate|Ltime|Lmicroseconds|LisoDate) != 0 {
-		dateSep := "/"
-		datetimeSep := " "
-		if l.flag&LisoDate != 0 {
-			dateSep = "-"
-			datetimeSep = "T"
+	if l.flag&LisoDate != 0 {
+		l.appendIsoDate(buf, l.flag|Lmicroseconds != 0)
+		*buf = append(*buf, ' ')
+	} else {
+		if l.flag&Ldate != 0 {
+			l.appendDate(buf, false)
+			*buf = append(*buf, ' ')
 		}
-		if l.flag&(Ldate|LisoDate) != 0 {
-			year, month, day := l.now.Date()
-			itoa(buf, year, 4)
-			*buf = append(*buf, dateSep...)
-			itoa(buf, int(month), 2)
-			*buf = append(*buf, dateSep...)
-			itoa(buf, day, 2)
-			*buf = append(*buf, datetimeSep...)
-		}
-		if l.flag&(Ltime|Lmicroseconds|LisoDate) != 0 {
-			hour, min, sec := l.now.Clock()
-			itoa(buf, hour, 2)
-			*buf = append(*buf, ':')
-			itoa(buf, min, 2)
-			*buf = append(*buf, ':')
-			itoa(buf, sec, 2)
-			if l.flag&Lmicroseconds != 0 {
-				*buf = append(*buf, '.')
-				itoa(buf, l.now.Nanosecond()/1e3, 6)
-			}
-			if l.flag&LisoDate != 0 {
-				*buf = append(*buf, 'Z')
-			}
+		if l.flag&(Ltime|Lmicroseconds) != 0 {
+			l.appendDate(buf, l.flag|Lmicroseconds != 0)
 			*buf = append(*buf, ' ')
 		}
 	}
@@ -461,7 +482,7 @@ func (l *Logger) formatHeader(buf *[]byte) {
 	}
 	if l.flag&Lelapsed != 0 && !l.lineStartTime.IsZero() && l.now != l.lineStartTime {
 		*buf = append(*buf, "("...)
-		*buf = append(*buf, formatDuration(l.now.Sub(l.lineStartTime))...)
+		l.appendElapsed(buf)
 		*buf = append(*buf, ") "...)
 	}
 }
