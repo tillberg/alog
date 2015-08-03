@@ -439,6 +439,34 @@ func TestLoggerInception(t *testing.T) {
 	buf.Reset()
 }
 
+// XXX To make this really work, we'd need to stub out time.Now() in log.go.
+// func TestPrefix(t *testing.T) {
+// 	assert := assert.New(t)
+// 	testEquivalence := func(template string, flags int) {
+// 		var buf1 bytes.Buffer
+// 		writer1 := New(&buf1, template, 0)
+// 		defer writer1.Close()
+// 		var buf2 bytes.Buffer
+// 		writer2 := New(&buf2, "", flags)
+// 		defer writer2.Close()
+// 		readBuf1 := func() string {
+// 			defer buf1.Reset()
+// 			return buf1.String()
+// 		}
+// 		readBuf2 := func() string {
+// 			defer buf2.Reset()
+// 			return buf2.String()
+// 		}
+// 		writer1.Printf("Hi\nHello")
+// 		writer2.Printf("Hi\nHello")
+// 		assert.Equal(readBuf1(), readBuf2())
+// 	}
+// 	testEquivalence("{date} {time} ", Ldate|Ltime)
+// 	testEquivalence("{date} {time micros} ", Ldate|Ltime|Lmicroseconds)
+// 	testEquivalence("{isodate} ", Lisodate)
+// 	testEquivalence("{isodate micros} ", Lisodate|Lmicroseconds)
+// }
+
 // TODO test &/or implement:
 // - Set custom ANSI template regexp specifically or globally
 // - Handle \b and \t characters intelligently

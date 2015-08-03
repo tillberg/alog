@@ -56,7 +56,7 @@ const (
 	Lshortfile                // final file name element and line number: d.go:23. overrides Llongfile
 	LUTC                      // if Ldate or Ltime is set, use UTC rather than the local time zone
 	Lelapsed                  // elapsed time since this line was first started
-	LisoDate
+	Lisodate
 	LstdFlags = Ldate | Ltime // initial values for the standard logger
 )
 
@@ -459,10 +459,29 @@ func (l *Logger) appendElapsed(buf *[]byte) {
 	}
 }
 
+var prefixTemplateRegexp = regexp.MustCompile("{(date|time|isodate|elapsed)( micros)?}|.+?")
+
 func (l *Logger) formatHeader(buf *[]byte) {
-	*buf = append(*buf, l.prefixFormatted...)
-	if l.flag&LisoDate != 0 {
-		l.appendIsoDate(buf, l.flag|Lmicroseconds != 0)
+	for _, groups := range prefixTemplateRegexp.FindAllSubmatch(l.prefixFormatted, -1) {
+		if len(groups[1]) != 0 {
+			s := string(groups[1])
+			includeMicros := len(groups[2]) > 0
+			if s == "date" {
+				l.appendDate(buf, false)
+			} else if s == "time" {
+				l.appendTime(buf, includeMicros)
+			} else if s == "isodate" {
+				l.appendIsoDate(buf, includeMicros)
+			} else if s == "elapsed" {
+				l.appendElapsed(buf)
+			}
+		} else {
+			*buf = append(*buf, groups[0]...)
+		}
+	}
+
+	if l.flag&Lisodate != 0 {
+		l.appendIsoDate(buf, l.flag&Lmicroseconds != 0)
 		*buf = append(*buf, ' ')
 	} else {
 		if l.flag&Ldate != 0 {
@@ -470,7 +489,7 @@ func (l *Logger) formatHeader(buf *[]byte) {
 			*buf = append(*buf, ' ')
 		}
 		if l.flag&(Ltime|Lmicroseconds) != 0 {
-			l.appendDate(buf, l.flag|Lmicroseconds != 0)
+			l.appendTime(buf, l.flag&Lmicroseconds != 0)
 			*buf = append(*buf, ' ')
 		}
 	}
