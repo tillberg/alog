@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/stretchr/testify/assert"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,18 +132,18 @@ func TestAnsiSpanningLines(t *testing.T) {
 	writer.Print("Hello, ")
 	assert.Equal("\033[32m$$ \033[39mHello, ", buf.String(), "we auto-reset ansi colors after the prefix")
 	buf.Reset()
-	writer.Print("we're writing\033[31m")
-	assert.Equal("we're writing\033[31m", buf.String())
+	writer.Print("we're writing in red\033[31m")
+	assert.Equal("we're writing in red\033[31m", buf.String())
 	buf.Reset()
 	writer.Print(" in red")
 	assert.Equal(" in red", buf.String())
 	buf.Reset()
-	writer.Print("even\nwhen we're on a new line.\033[39m\n")
-	assert.Equal("even\033[39m\n\033[32m$$ \033[39m\033[31mwhen we're on a new line.\033[39m\n", buf.String())
+	writer.Print("but\nnot when we're on a new line.\033[39m\n")
+	assert.Equal("but\033[39m\n\033[32m$$ \033[39mnot when we're on a new line.\033[39m\n", buf.String())
 	buf.Reset()
 	writer.EnableColorTemplate()
-	writer.Printf("@(blue:templated\nnewlines\ntoo).\n")
-	assert.Equal("\033[32m$$ \033[39m\033[34mtemplated\033[39m\n\033[32m$$ \033[39m\033[34mnewlines\033[39m\n\033[32m$$ \033[39m\033[34mtoo\033[39m.\n", buf.String())
+	writer.Printf("@(blue:but not\ntemplated\nnewlines).\n")
+	assert.Equal("\033[32m$$ \033[39m\033[34mbut not\033[39m\n\033[32m$$ \033[39mtemplated\n\033[32m$$ \033[39mnewlines\033[39m.\n", buf.String())
 	buf.Reset()
 }
 
@@ -305,48 +306,45 @@ func TestReplace(t *testing.T) {
 func TestMultilineMode(t *testing.T) {
 	assert := assert.New(t)
 	var buf bytes.Buffer
-	var writer1 = New(&buf, "", 0)
+	writer1 := New(&buf, "", 0)
+	lineUp := tput("cuu", "1")
+	lineDown := tput("cud", "1")
+	readBuf := func() string {
+		s := buf.String()
+		buf.Reset()
+		s = strings.Replace(s, lineDown, "{DOWN}", -1)
+		s = strings.Replace(s, lineUp, "{UP}", -1)
+		return s
+	}
 	writer1.EnableMultilineMode()
 	writer1.Print("writer1...")
-	assert.Equal("writer1...", buf.String())
-	buf.Reset()
-	var writer2 = New(&buf, "", 0)
+	assert.Equal("writer1...", readBuf())
+	writer2 := New(&buf, "", 0)
 	writer2.Print("writer2...")
-	assert.Equal("\nwriter2...", buf.String())
-	buf.Reset()
+	assert.Equal("\nwriter2...", readBuf())
 	writer1.Print(" working...")
-	assert.Equal("\033[1Fwriter1... working...", buf.String())
-	buf.Reset()
+	assert.Equal("{UP}\rwriter1... working...", readBuf())
 	writer1.Print("  50 percent finished...")
-	assert.Equal("  50 percent finished...", buf.String())
-	buf.Reset()
+	assert.Equal("  50 percent finished...", readBuf())
 	writer2.Print(" working... ")
-	assert.Equal("\033[1Ewriter2... working... ", buf.String())
-	buf.Reset()
+	assert.Equal("{DOWN}\rwriter2... working... ", readBuf())
 	writer2.Print("done.\n")
 	// Need to move up to the previous line, overwrite writer1's text, then only move down a line.
 	// A newline is not necessary since we're only *completing* an existing line and not yet starting
 	// a new line.
-	assert.Equal("\033[1Fwriter2... working... done.                  \033[1Ewriter1... working...  50 percent finished...", buf.String())
-	buf.Reset()
+	assert.Equal("{UP}\rwriter2... working... done.                  {DOWN}\rwriter1... working...  50 percent finished...", readBuf())
 	writer2.Print("working again...")
-	assert.Equal("\nworking again...", buf.String())
-	buf.Reset()
+	assert.Equal("\nworking again...", readBuf())
 	writer1.Print("\rwriter1... working... 100 percent. done.     \n")
 	// Again, we don't append a newline, but this time, we move to the last line even though we're not
 	// going to write anything else immediately.
-	assert.Equal("\033[1Fwriter1... working... 100 percent. done.     \033[1E", buf.String())
-	buf.Reset()
+	assert.Equal("{UP}\rwriter1... working... 100 percent. done.     {DOWN}\r", readBuf())
 	writer1.Print("Hello")
-	assert.Equal("\nHello", buf.String())
-	buf.Reset()
+	assert.Equal("\nHello", readBuf())
 	writer1.Close()
-	assert.Equal("\x1b[1FHello           \x1b[1Eworking again...", buf.String())
-	buf.Reset()
+	assert.Equal("{UP}\rHello           {DOWN}\rworking again...", readBuf())
 	writer2.Close()
-	assert.Equal("\n", buf.String())
-	buf.Reset()
-
+	assert.Equal("\n", readBuf())
 }
 
 func TestAutoNewlines(t *testing.T) {
