@@ -313,7 +313,7 @@ func newStd() *Logger {
 	l.partialLinesEnabled = &yes
 	l.colorRegexp = regexp.MustCompile("@\\(([\\w,]+?)(:([^)]*?))?\\)")
 	l.colorEnabled = &yes
-	l.colorTemplateEnabled = &no
+	l.colorTemplateEnabled = &yes
 	l.autoAppendNewline = &no
 	// This is like calling reprocessPrefix:
 	l.prefixFormatted = processColorTemplates(l.colorRegexp, l.prefix)
