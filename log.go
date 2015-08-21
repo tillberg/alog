@@ -309,12 +309,14 @@ func New(out io.Writer, prefix string, flag int) *Logger {
 // newStd duplicates some of the work done by New because we can't call
 // reprocessPrefix here (as it creates a circular reference back to std)
 func newStd() *Logger {
-	var l = &Logger{out: os.Stderr, prefix: []byte{}, flag: LstdFlags}
+	var l = &Logger{out: os.Stderr, prefix: []byte("@(dim:{isodate}) "), flag: 0}
 	l.partialLinesEnabled = &yes
 	l.colorRegexp = regexp.MustCompile("@\\(([\\w,]+?)(:([^)]*?))?\\)")
 	l.colorEnabled = &yes
 	l.colorTemplateEnabled = &no
 	l.autoAppendNewline = &no
+	// This is like calling reprocessPrefix:
+	l.prefixFormatted = processColorTemplates(l.colorRegexp, l.prefix)
 	loggers = append(loggers, l)
 	return l
 }
