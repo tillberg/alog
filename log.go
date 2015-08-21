@@ -74,6 +74,10 @@ var ansiColorCodes = map[string]int{
 	"cyan":    36,
 	"white":   37,
 	"cr":      39,
+
+	"error":   31,
+	"success": 32,
+	"warn":    33,
 }
 
 var tputCache = make(map[string]string)
