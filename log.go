@@ -89,8 +89,9 @@ func tput(strs ...string) string {
 		cmd := exec.Command("tput", strs...)
 		out, err := cmd.Output()
 		if err != nil {
-			fmt.Printf("\nloadEscape(%q) -> %#v", key, err)
-			os.Exit(1)
+			msg := fmt.Sprintf("\nFailed to execute `tput %s`. That probably means you need to disable MultilineMode.\n", strings.Join(strs, " "))
+			os.Stderr.WriteString(msg)
+			return ""
 		}
 		val = string(out)
 		tputCache[key] = val
