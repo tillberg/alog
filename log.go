@@ -103,7 +103,7 @@ type WriterState struct {
 	lastTemp        [][]byte
 	tempLoggers     []*Logger
 	termWidth       int
-	singleline      bool
+	multiline       bool
 	cursorLineIndex int
 	cursorIsInline  bool
 	cursorIsAtBegin bool
@@ -569,7 +569,7 @@ func writeLine(out io.Writer, buf []byte) {
 	setTempLineOutput(out, 0, buf)
 	out.Write(getActiveAnsiCodes(buf).getResetBytes())
 	ws := getWriterState(out)
-	if !ws.singleline {
+	if ws.multiline {
 		ws.lastTemp = ws.lastTemp[1:]
 		// Always keep an empty line at the bottom
 		if len(ws.lastTemp) == 0 {
@@ -595,7 +595,7 @@ func updateTempOutput(out io.Writer) {
 	for _, logger := range ws.tempLoggers {
 		bufs = append(bufs, logger.getFormattedLine(logger.buf))
 	}
-	if !ws.singleline {
+	if ws.multiline {
 		for i := len(ws.lastTemp); i < len(bufs); i++ {
 			moveCursorToLine(out, i-1)
 			out.Write(bytesNewline)
@@ -1153,7 +1153,7 @@ func (l *Logger) SetMultilineEnabled(flag bool) {
 	ws.lock()
 	defer ws.unlock()
 	getWriterState(l.out).flushAll()
-	getWriterState(l.out).singleline = !flag
+	getWriterState(l.out).multiline = flag
 }
 func (l *Logger) EnableMultilineMode()  { l.SetMultilineEnabled(true) }
 func (l *Logger) EnableSinglelineMode() { l.SetMultilineEnabled(false) }
