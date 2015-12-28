@@ -1,12 +1,13 @@
-package log
+package alog
 
 import (
 	"bytes"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestPrint(t *testing.T) {

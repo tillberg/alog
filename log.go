@@ -18,7 +18,7 @@
 // of each logged message.
 // The Fatal functions call os.Exit(1) after writing the log message.
 // The Panic functions call panic after writing the log message.
-package log
+package alog
 
 import (
 	"bytes"
@@ -65,6 +65,7 @@ var ansiColorCodes = map[string]int{
 	"reset":   0,
 	"bright":  1,
 	"dim":     2,
+	"black":   30,
 	"grey":    30,
 	"red":     31,
 	"green":   32,
