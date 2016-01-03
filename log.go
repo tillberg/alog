@@ -309,7 +309,7 @@ func New(out io.Writer, prefix string, flag int) *Logger {
 }
 
 // newStd duplicates some of the work done by New because we can't call
-// reprocessPrefix here (as it creates a circular reference back to std)
+// reprocessPrefix here (as it creates a circular reference back to DefaultLogger)
 func newStd() *Logger {
 	var l = &Logger{out: os.Stderr, prefix: []byte("@(dim:{isodate}) "), flag: 0}
 	l.partialLinesEnabled = &yes
@@ -323,7 +323,7 @@ func newStd() *Logger {
 	return l
 }
 
-var std = newStd()
+var DefaultLogger = newStd()
 
 func isTrueDefaulted(flag *bool, fallback *bool) bool {
 	if flag != nil {
@@ -333,25 +333,25 @@ func isTrueDefaulted(flag *bool, fallback *bool) bool {
 }
 
 func (l *Logger) isColorEnabled() bool {
-	return isTrueDefaulted(l.colorEnabled, std.colorEnabled)
+	return isTrueDefaulted(l.colorEnabled, DefaultLogger.colorEnabled)
 }
 
 func (l *Logger) isPartialLinesEnabled() bool {
-	return isTrueDefaulted(l.partialLinesEnabled, std.partialLinesEnabled)
+	return isTrueDefaulted(l.partialLinesEnabled, DefaultLogger.partialLinesEnabled)
 }
 
 func (l *Logger) isAutoNewlineEnabled() bool {
-	return isTrueDefaulted(l.autoAppendNewline, std.autoAppendNewline)
+	return isTrueDefaulted(l.autoAppendNewline, DefaultLogger.autoAppendNewline)
 }
 
 func (l *Logger) getColorTemplateRegexp() *regexp.Regexp {
-	if !isTrueDefaulted(l.colorTemplateEnabled, std.colorTemplateEnabled) {
+	if !isTrueDefaulted(l.colorTemplateEnabled, DefaultLogger.colorTemplateEnabled) {
 		return nil
 	}
 	if l.colorRegexp != nil {
 		return l.colorRegexp
 	}
-	return std.colorRegexp
+	return DefaultLogger.colorRegexp
 }
 
 // SetOutput sets the output destination for the logger.
@@ -1167,31 +1167,31 @@ func (l *Logger) EnableSinglelineMode() { l.SetMultilineEnabled(false) }
 
 // SetOutput sets the output destination for the standard logger.
 func SetOutput(w io.Writer) {
-	ws := getWriterState(std.out)
+	ws := getWriterState(DefaultLogger.out)
 	ws.lock()
 	defer ws.unlock()
-	std.flushInt()
-	std.out = w
+	DefaultLogger.flushInt()
+	DefaultLogger.out = w
 }
 
 // Flags returns the output flags for the standard logger.
 func Flags() int {
-	return std.Flags()
+	return DefaultLogger.Flags()
 }
 
 // SetFlags sets the output flags for the standard logger.
 func SetFlags(flag int) {
-	std.SetFlags(flag)
+	DefaultLogger.SetFlags(flag)
 }
 
 // Prefix returns the output prefix for the standard logger.
 func Prefix() string {
-	return std.Prefix()
+	return DefaultLogger.Prefix()
 }
 
 // SetPrefix sets the output prefix for the standard logger.
 func SetPrefix(prefix string) {
-	std.SetPrefix(prefix)
+	DefaultLogger.SetPrefix(prefix)
 }
 
 // These functions write to the standard logger.
@@ -1199,76 +1199,76 @@ func SetPrefix(prefix string) {
 // Print calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Print.
 func Print(v ...interface{}) {
-	std.intOutput(2, []byte(fmt.Sprint(v...)), false)
+	DefaultLogger.intOutput(2, []byte(fmt.Sprint(v...)), false)
 }
 
 // Printf calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Printf.
 func Printf(format string, v ...interface{}) {
-	ws := getWriterState(std.out)
+	ws := getWriterState(DefaultLogger.out)
 	ws.lock()
 	defer ws.unlock()
-	std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format), v...)), true)
+	DefaultLogger.intOutput(2, []byte(fmt.Sprintf(DefaultLogger.applyColorTemplates(format), v...)), true)
 }
 
 func Replace(v ...interface{}) {
-	ws := getWriterState(std.out)
+	ws := getWriterState(DefaultLogger.out)
 	ws.lock()
 	defer ws.unlock()
-	std.truncateBuf()
-	std.intOutput(2, []byte(fmt.Sprint(v...)), true)
+	DefaultLogger.truncateBuf()
+	DefaultLogger.intOutput(2, []byte(fmt.Sprint(v...)), true)
 }
 
 func Replacef(format string, v ...interface{}) {
-	ws := getWriterState(std.out)
+	ws := getWriterState(DefaultLogger.out)
 	ws.lock()
 	defer ws.unlock()
-	std.truncateBuf()
-	std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format), v...)), true)
+	DefaultLogger.truncateBuf()
+	DefaultLogger.intOutput(2, []byte(fmt.Sprintf(DefaultLogger.applyColorTemplates(format), v...)), true)
 }
 
 // Println calls Output to print to the standard logger.
 // Arguments are handled in the manner of fmt.Println.
 func Println(v ...interface{}) {
-	std.intOutput(2, []byte(fmt.Sprintln(v...)), false)
+	DefaultLogger.intOutput(2, []byte(fmt.Sprintln(v...)), false)
 }
 
 // Fatal is equivalent to Print() followed by a call to os.Exit(1).
 func Fatal(v ...interface{}) {
-	std.intOutput(2, []byte(fmt.Sprint(v...)), false)
+	DefaultLogger.intOutput(2, []byte(fmt.Sprint(v...)), false)
 	osExit()
 }
 
 // Fatalf is equivalent to Printf() followed by a call to os.Exit(1).
 func Fatalf(format string, v ...interface{}) {
-	ws := getWriterState(std.out)
+	ws := getWriterState(DefaultLogger.out)
 	ws.lock()
-	std.intOutput(2, []byte(fmt.Sprintf(std.applyColorTemplates(format), v...)), true)
+	DefaultLogger.intOutput(2, []byte(fmt.Sprintf(DefaultLogger.applyColorTemplates(format), v...)), true)
 	ws.unlock()
 	osExit()
 }
 
 // Fatalln is equivalent to Println() followed by a call to os.Exit(1).
 func Fatalln(v ...interface{}) {
-	std.intOutput(2, []byte(fmt.Sprintln(v...)), false)
+	DefaultLogger.intOutput(2, []byte(fmt.Sprintln(v...)), false)
 	osExit()
 }
 
 // Panic is equivalent to Print() followed by a call to panic().
 func Panic(v ...interface{}) {
 	s := fmt.Sprint(v...)
-	std.intOutput(2, []byte(s), false)
-	std.flushInt()
+	DefaultLogger.intOutput(2, []byte(s), false)
+	DefaultLogger.flushInt()
 	panic(s)
 }
 
 // Panicf is equivalent to Printf() followed by a call to panic().
 func Panicf(format string, v ...interface{}) {
-	ws := getWriterState(std.out)
+	ws := getWriterState(DefaultLogger.out)
 	ws.lock()
-	s := fmt.Sprintf(std.applyColorTemplates(format), v...)
-	std.intOutput(2, []byte(s), true)
-	std.flushInt()
+	s := fmt.Sprintf(DefaultLogger.applyColorTemplates(format), v...)
+	DefaultLogger.intOutput(2, []byte(s), true)
+	DefaultLogger.flushInt()
 	ws.unlock()
 	panic(s)
 }
@@ -1276,27 +1276,27 @@ func Panicf(format string, v ...interface{}) {
 // Panicln is equivalent to Println() followed by a call to panic().
 func Panicln(v ...interface{}) {
 	s := fmt.Sprintln(v...)
-	std.intOutput(2, []byte(s), false)
+	DefaultLogger.intOutput(2, []byte(s), false)
 	panic(s)
 }
 
 func Bail(err error) {
-	std.Bail(err)
+	DefaultLogger.Bail(err)
 }
 
-func ShowPartialLines()                         { std.ShowPartialLines() }
-func HidePartialLines()                         { std.HidePartialLines() }
-func EnableColor()                              { std.EnableColor() }
-func DisableColor()                             { std.DisableColor() }
-func EnableColorTemplate()                      { std.EnableColorTemplate() }
-func DisableColorTemplate()                     { std.DisableColorTemplate() }
-func EnableAutoNewlines()                       { std.SetAutoNewlines(true) }
-func DisableAutoNewlines()                      { std.SetAutoNewlines(false) }
-func SetColorTemplateRegexp(rgx *regexp.Regexp) { std.SetColorTemplateRegexp(rgx) }
-func SetTerminalWidth(width int)                { std.SetTerminalWidth(width) }
-func EnableMultilineMode()                      { std.EnableMultilineMode() }
-func EnableSinglelineMode()                     { std.EnableSinglelineMode() }
-func Colorify(s string) string                  { return std.Colorify(s) }
+func ShowPartialLines()                         { DefaultLogger.ShowPartialLines() }
+func HidePartialLines()                         { DefaultLogger.HidePartialLines() }
+func EnableColor()                              { DefaultLogger.EnableColor() }
+func DisableColor()                             { DefaultLogger.DisableColor() }
+func EnableColorTemplate()                      { DefaultLogger.EnableColorTemplate() }
+func DisableColorTemplate()                     { DefaultLogger.DisableColorTemplate() }
+func EnableAutoNewlines()                       { DefaultLogger.SetAutoNewlines(true) }
+func DisableAutoNewlines()                      { DefaultLogger.SetAutoNewlines(false) }
+func SetColorTemplateRegexp(rgx *regexp.Regexp) { DefaultLogger.SetColorTemplateRegexp(rgx) }
+func SetTerminalWidth(width int)                { DefaultLogger.SetTerminalWidth(width) }
+func EnableMultilineMode()                      { DefaultLogger.EnableMultilineMode() }
+func EnableSinglelineMode()                     { DefaultLogger.EnableSinglelineMode() }
+func Colorify(s string) string                  { return DefaultLogger.Colorify(s) }
 
 func AddAnsiColorCode(s string, code int) {
 	ansiColorCodes[s] = code
@@ -1325,5 +1325,5 @@ func osExit() {
 // if Llongfile or Lshortfile is set; a value of 1 will print the details
 // for the caller of Output.
 func Output(calldepth int, s string) error {
-	return std.Output(calldepth+1, s) // +1 for this frame.
+	return DefaultLogger.Output(calldepth+1, s) // +1 for this frame.
 }
