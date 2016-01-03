@@ -60,25 +60,65 @@ const (
 	LstdFlags = Ldate | Ltime // initial values for the standard logger
 )
 
-var ansiColorCodes = map[string]int{
-	"r":       0,
-	"reset":   0,
-	"bright":  1,
-	"dim":     2,
-	"black":   30,
-	"grey":    30,
-	"red":     31,
-	"green":   32,
-	"yellow":  33,
-	"blue":    34,
-	"magenta": 35,
-	"cyan":    36,
-	"white":   37,
-	"cr":      39,
+type ColorCode int
 
-	"error":   31,
-	"success": 32,
-	"warn":    33,
+const (
+	ColorBlack ColorCode = 30 + iota
+	ColorRed
+	ColorGreen
+	ColorYellow
+	ColorBlue
+	ColorMagenta
+	ColorCyan
+	ColorWhite
+)
+const (
+	ColorNone     ColorCode = 0
+	ColorReset              = 39
+	ColorResetAll           = 128
+	ColorBright             = 256
+	ColorDim                = 512
+)
+
+func (code ColorCode) GetAnsiCodes() []int {
+	codes := []int{}
+	if code&ColorResetAll != 0 {
+		codes = append(codes, 0)
+		code = code & (^ColorResetAll)
+	}
+	if code&ColorBright != 0 {
+		codes = append(codes, 1)
+		code = code & (^ColorBright)
+	}
+	if code&ColorDim != 0 {
+		codes = append(codes, 2)
+		code = code & (^ColorDim)
+	}
+	if code != ColorNone {
+		codes = append(codes, int(code))
+	}
+	return codes
+}
+
+var ansiColorCodes = map[string]ColorCode{
+	"r":       ColorResetAll,
+	"reset":   ColorResetAll,
+	"bright":  ColorBright,
+	"dim":     ColorBright | ColorBlack,
+	"black":   ColorBlack,
+	"grey":    ColorBlack,
+	"red":     ColorRed,
+	"green":   ColorGreen,
+	"yellow":  ColorYellow,
+	"blue":    ColorBlue,
+	"magenta": ColorMagenta,
+	"cyan":    ColorCyan,
+	"white":   ColorWhite,
+	"cr":      ColorReset,
+
+	"error":   ColorRed,
+	"success": ColorGreen,
+	"warn":    ColorYellow,
 }
 
 var tputCache = make(map[string]string)
@@ -733,13 +773,15 @@ func processColorTemplates(colorTemplateRegexp *regexp.Regexp, buf []byte) []byt
 		groups := colorTemplateRegexp.FindSubmatch(token)
 		var ansiActive ActiveAnsiCodes
 		for _, codeBytes := range bytes.Split(groups[1], bytesComma) {
-			code, ok := ansiColorCodes[string(codeBytes)]
+			colorCode, ok := ansiColorCodes[string(codeBytes)]
 			if !ok {
 				// Don't modify the text if we don't recognize any of the codes
 				return groups[0]
 			}
-			ansiActive.add(code)
-			tmp2 = append(tmp2, ansiEscapeBytes(code)...)
+			for _, code := range colorCode.GetAnsiCodes() {
+				ansiActive.add(code)
+				tmp2 = append(tmp2, ansiEscapeBytes(code)...)
+			}
 		}
 		if len(groups[2]) > 0 {
 			tmp2 = append(tmp2, groups[3]...)
@@ -1298,7 +1340,7 @@ func EnableMultilineMode()                      { DefaultLogger.EnableMultilineM
 func EnableSinglelineMode()                     { DefaultLogger.EnableSinglelineMode() }
 func Colorify(s string) string                  { return DefaultLogger.Colorify(s) }
 
-func AddAnsiColorCode(s string, code int) {
+func AddAnsiColorCode(s string, code ColorCode) {
 	ansiColorCodes[s] = code
 }
 
