@@ -1069,6 +1069,12 @@ func (l *Logger) Bail(err error) {
 	osExit()
 }
 
+func (l *Logger) BailIf(err error) {
+	if err != nil {
+		l.Bail(err)
+	}
+}
+
 // Flags returns the output flags for the logger.
 func (l *Logger) Flags() int {
 	ws := getWriterState(l.out)
@@ -1324,6 +1330,10 @@ func Panicln(v ...interface{}) {
 
 func Bail(err error) {
 	DefaultLogger.Bail(err)
+}
+
+func BailIf(err error) {
+	DefaultLogger.BailIf(err)
 }
 
 func ShowPartialLines()                         { DefaultLogger.ShowPartialLines() }
