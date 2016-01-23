@@ -340,8 +340,6 @@ type Logger struct {
 // The prefix appears at the beginning of each generated log line.
 // The flag argument defines the logging properties.
 func New(out io.Writer, prefix string, flag int) *Logger {
-	mutexGlobal.Lock()
-	defer mutexGlobal.Unlock()
 	var l = &Logger{out: out, prefix: []byte(prefix), flag: flag}
 	l.reprocessPrefix()
 	return l
