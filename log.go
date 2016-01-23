@@ -735,7 +735,6 @@ func trimStringEllipsis(buf []byte, length int) []byte {
 }
 
 func stringLen(buf []byte) int {
-	// This is not rune-aware
 	return utf8.RuneCount(uncolorize(buf))
 }
 
