@@ -1136,10 +1136,12 @@ func (l *Logger) Flush() {
 }
 
 func (l *Logger) Close() error {
-	ws := getWriterState(l.out)
-	ws.lock()
-	defer ws.unlock()
-	l.flushInt()
+	if len(l.buf) > 0 {
+		ws := getWriterState(l.out)
+		ws.lock()
+		defer ws.unlock()
+		l.flushInt()
+	}
 	l.closeInt()
 	return nil
 }
