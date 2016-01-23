@@ -206,7 +206,7 @@ func getWriterState(writer io.Writer) *WriterState {
 
 // ensures atomic writes; shared by all Logger instances
 var mutexGlobal sync.RWMutex
-var loggers []*Logger
+
 var writers map[io.Writer]*WriterState = make(map[io.Writer]*WriterState)
 
 const ansiCodeResetAll = 0
@@ -344,7 +344,6 @@ func New(out io.Writer, prefix string, flag int) *Logger {
 	defer mutexGlobal.Unlock()
 	var l = &Logger{out: out, prefix: []byte(prefix), flag: flag}
 	l.reprocessPrefix()
-	loggers = append(loggers, l)
 	return l
 }
 
@@ -359,7 +358,6 @@ func newStd() *Logger {
 	l.autoAppendNewline = &no
 	// This is like calling reprocessPrefix:
 	l.prefixFormatted = processColorTemplates(l.colorRegexp, l.prefix)
-	loggers = append(loggers, l)
 	return l
 }
 
