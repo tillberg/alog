@@ -288,6 +288,13 @@ func getActiveAnsiCodes(buf []byte) *ActiveAnsiCodes {
 
 // GetSize returns the dimensions of the given terminal.
 func getTermWidth(writer io.Writer) int {
+	envColumns := os.Getenv("COLUMNS")
+	if envColumns != "" {
+		num, _ := strconv.Atoi(envColumns)
+		if num != 0 {
+			return num
+		}
+	}
 	ws := getWriterState(writer)
 	if ws.termWidth != 0 {
 		return ws.termWidth
