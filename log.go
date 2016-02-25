@@ -857,14 +857,14 @@ func (l *Logger) Output(calldepth int, _s string) error {
 // provided for generality, although at the moment on all pre-defined
 // paths it will be 2.
 func (l *Logger) intOutput(calldepth int, s []byte, haveLock bool) error {
-	l.now = time.Now() // get this early.
-	if l.flag&LUTC != 0 {
-		l.now = l.now.UTC()
-	}
 	ws := getWriterState(l.out)
 	if !haveLock {
 		ws.lock()
 		defer ws.unlock()
+	}
+	l.now = time.Now() // get this early.
+	if l.flag&LUTC != 0 {
+		l.now = l.now.UTC()
 	}
 	if l.isClosed {
 		return errors.New("Attempted to write to closed Logger.")
