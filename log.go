@@ -342,6 +342,49 @@ type Logger struct {
 	lineStartTime        time.Time
 }
 
+type LoggerInt interface {
+	Printf(string, ...interface{})
+	Print(...interface{})
+	Replacef(string, ...interface{})
+	Replace(...interface{})
+	Println(...interface{})
+	Fatal(...interface{})
+	Fatalf(string, ...interface{})
+	Fatalln(...interface{})
+	Panic(...interface{})
+	Panicf(string, ...interface{})
+	Panicln(...interface{})
+	Bail(error)
+	BailIf(error)
+	Flags() int
+	SetFlags(int)
+	Prefix() string
+	SetPrefix(string)
+	Write([]byte) (int, error)
+	Colorify(string) string
+	flushInt()
+	closeInt()
+	Flush()
+	Close() error
+	SetPartialLinesEnabled(bool)
+	ShowPartialLines()
+	HidePartialLines()
+	SetColorEnabled(bool)
+	EnableColor()
+	DisableColor()
+	SetColorTemplateEnabled(bool)
+	EnableColorTemplate()
+	DisableColorTemplate()
+	SetAutoNewlines(bool)
+	EnableAutoNewlines()
+	DisableAutoNewlines()
+	SetColorTemplateRegexp(*regexp.Regexp)
+	SetTerminalWidth(int)
+	SetMultilineEnabled(bool)
+	EnableMultilineMode()
+	EnableSinglelineMode()
+}
+
 // New creates a new Logger.   The out variable sets the
 // destination to which log data will be written.
 // The prefix appears at the beginning of each generated log line.
@@ -423,50 +466,6 @@ func itoa(buf *[]byte, i int, wid int) {
 	// i < 10
 	b[bp] = byte('0' + i)
 	*buf = append(*buf, b[bp:]...)
-}
-
-func FormatDuration(duration time.Duration) []byte {
-	tmp := []byte{}
-	secs := duration.Seconds()
-	if secs >= 600 {
-		if secs >= 10*3600 {
-			hours := duration.Hours()
-			if hours > 9999 {
-				tmp = append(tmp, fmt.Sprintf("%4.0f", hours)...)
-			} else if hours >= 99.95 {
-				tmp = append(tmp, fmt.Sprintf("%4.0f", hours)[:4]...)
-			} else {
-				tmp = append(tmp, fmt.Sprintf("%4.1f", hours)[:4]...)
-			}
-			tmp = append(tmp, "h"...)
-		} else {
-			mins := duration.Minutes()
-			if mins >= 99.95 {
-				tmp = append(tmp, fmt.Sprintf("%4.0f", mins)[:4]...)
-			} else {
-				tmp = append(tmp, fmt.Sprintf("%4.1f", mins)[:4]...)
-			}
-			tmp = append(tmp, "m"...)
-		}
-	} else {
-		secs := duration.Seconds()
-		if secs >= 0.9995 {
-			if secs >= 99.95 {
-				tmp = append(tmp, fmt.Sprintf("%4.0f", secs)[:4]...)
-			} else {
-				tmp = append(tmp, fmt.Sprintf("%4.2f", secs)[:4]...)
-			}
-			tmp = append(tmp, "s"...)
-		} else {
-			if secs >= 0.00995 {
-				tmp = append(tmp, fmt.Sprintf("%3.0f", 1000*secs)[:3]...)
-			} else {
-				tmp = append(tmp, fmt.Sprintf("%3.1f", 1000*secs)[:3]...)
-			}
-			tmp = append(tmp, "ms"...)
-		}
-	}
-	return tmp
 }
 
 func (l *Logger) appendDate(buf *[]byte, useIsoDate bool) {
