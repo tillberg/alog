@@ -498,7 +498,6 @@ func (l *Logger) appendIsoDate(buf *[]byte, includeMicros bool) {
 	l.appendDate(buf, true)
 	*buf = append(*buf, 'T')
 	l.appendTime(buf, includeMicros)
-	*buf = append(*buf, 'Z')
 }
 
 func (l *Logger) appendElapsed(buf *[]byte) {
