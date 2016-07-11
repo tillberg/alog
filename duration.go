@@ -5,17 +5,17 @@ import (
 	"time"
 )
 
-type timer time.Time
+type Timer time.Time
 
-func NewTimer() timer {
-	return timer(time.Now())
+func NewTimer() Timer {
+	return Timer(time.Now())
 }
 
-func (t timer) Elapsed() time.Duration {
+func (t Timer) Elapsed() time.Duration {
 	return time.Since(time.Time(t))
 }
 
-func (t timer) FormatElapsed() string {
+func (t Timer) FormatElapsed() string {
 	return FormatDuration(t.Elapsed())
 }
 
@@ -23,7 +23,7 @@ var elapsedTimeFormatLow = Colorify("@(green:%s)")
 var elapsedTimeFormatMedium = Colorify("@(yellow:%s)")
 var elapsedTimeFormatHigh = Colorify("@(red:%s)")
 
-func (t timer) FormatElapsedColor(mediumTime time.Duration, longTime time.Duration) string {
+func (t Timer) FormatElapsedColor(mediumTime time.Duration, longTime time.Duration) string {
 	elapsed := t.Elapsed()
 	elapsedStr := FormatDuration(elapsed)
 	if elapsed < mediumTime {
