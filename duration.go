@@ -24,12 +24,15 @@ var elapsedTimeFormatMedium = Colorify("@(yellow:%s)")
 var elapsedTimeFormatHigh = Colorify("@(red:%s)")
 
 func (t Timer) FormatElapsedColor(mediumTime time.Duration, longTime time.Duration) string {
-	elapsed := t.Elapsed()
-	elapsedStr := FormatDuration(elapsed)
-	if elapsed < mediumTime {
+	return FormatDurationColor(t.Elapsed(), mediumTime, longTime)
+}
+
+func FormatDurationColor(duration time.Duration, mediumTime time.Duration, longTime time.Duration) string {
+	elapsedStr := FormatDuration(duration)
+	if duration < mediumTime {
 		return fmt.Sprintf(elapsedTimeFormatLow, elapsedStr)
 	}
-	if elapsed < longTime {
+	if duration < longTime {
 		return fmt.Sprintf(elapsedTimeFormatMedium, elapsedStr)
 	}
 	return fmt.Sprintf(elapsedTimeFormatHigh, elapsedStr)
