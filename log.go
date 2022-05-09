@@ -972,6 +972,13 @@ func (l *Logger) Replace(v ...interface{}) {
 // Arguments are handled in the manner of fmt.Println.
 func (l *Logger) Println(v ...interface{}) { l.intOutput(2, []byte(fmt.Sprintln(v...)), false) }
 
+func (l *Logger) Error(format string, v ...interface{}) {
+	if !strings.HasSuffix(format, "\n") {
+		format += "\n"
+	}
+	l.Printf(format, v...)
+}
+
 // Fatal is equivalent to l.Print() followed by a call to os.Exit(1).
 func (l *Logger) Fatal(v ...interface{}) {
 	l.intOutput(2, []byte(fmt.Sprint(v...)), false)
@@ -1268,6 +1275,10 @@ func Replacef(format string, v ...interface{}) {
 // Arguments are handled in the manner of fmt.Println.
 func Println(v ...interface{}) {
 	DefaultLogger.intOutput(2, []byte(fmt.Sprintln(v...)), false)
+}
+
+func Error(format string, v ...interface{}) {
+	DefaultLogger.Error(format, v...)
 }
 
 // Fatal is equivalent to Print() followed by a call to os.Exit(1).
