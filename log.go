@@ -946,6 +946,12 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 // Arguments are handled in the manner of fmt.Print.
 func (l *Logger) Print(v ...interface{}) { l.intOutput(2, []byte(fmt.Sprint(v...)), false) }
 
+// Info calls l.Output to print to the logger, adding a newline at the end of the format string.
+// Arguments are handled in the manner of fmt.Printf.
+func (l *Logger) Info(format string, v ...interface{}) {
+	l.Printf(format+"\n", v...)
+}
+
 func (l *Logger) Replacef(format string, v ...interface{}) {
 	ws := getWriterState(l.out)
 	ws.lock()
@@ -1236,6 +1242,10 @@ func Printf(format string, v ...interface{}) {
 	ws.lock()
 	defer ws.unlock()
 	DefaultLogger.intOutput(2, []byte(fmt.Sprintf(DefaultLogger.applyColorTemplates(format), v...)), true)
+}
+
+func Info(format string, v ...interface{}) {
+	DefaultLogger.Info(format, v...)
 }
 
 func Replace(v ...interface{}) {
