@@ -72,6 +72,7 @@ const (
 )
 const (
 	ColorNone     ColorCode = 0
+	ColorBold               = 1
 	ColorReset              = 39
 	ColorResetAll           = 128
 	ColorBright             = 256
@@ -101,6 +102,7 @@ func (code ColorCode) GetAnsiCodes() []int {
 var ansiColorCodes = map[string]ColorCode{
 	"r":       ColorResetAll,
 	"reset":   ColorResetAll,
+	"bold":    ColorBold,
 	"bright":  ColorBright,
 	"dim":     ColorBright | ColorBlack,
 	"black":   ColorBlack,
