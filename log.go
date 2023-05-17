@@ -451,23 +451,27 @@ func (l *Logger) appendDate(buf *[]byte, useIsoDate bool) {
 	itoa(buf, day, 2)
 }
 
-func (l *Logger) appendTime(buf *[]byte, includeMicros bool) {
+func (l *Logger) appendTime(buf *[]byte, includeMillis bool, includeMicros bool) {
 	hour, min, sec := l.now.Clock()
 	itoa(buf, hour, 2)
 	*buf = append(*buf, ':')
 	itoa(buf, min, 2)
 	*buf = append(*buf, ':')
 	itoa(buf, sec, 2)
+	if includeMillis {
+		*buf = append(*buf, '.')
+		itoa(buf, l.now.Nanosecond()/1e6, 3)
+	}
 	if includeMicros {
 		*buf = append(*buf, '.')
 		itoa(buf, l.now.Nanosecond()/1e3, 6)
 	}
 }
 
-func (l *Logger) appendIsoDate(buf *[]byte, includeMicros bool) {
+func (l *Logger) appendIsoDate(buf *[]byte, includeMillis bool, includeMicros bool) {
 	l.appendDate(buf, true)
 	*buf = append(*buf, 'T')
-	l.appendTime(buf, includeMicros)
+	l.appendTime(buf, includeMillis, includeMicros)
 }
 
 func (l *Logger) appendElapsed(buf *[]byte) {
@@ -478,19 +482,20 @@ func (l *Logger) appendElapsed(buf *[]byte) {
 	}
 }
 
-var prefixTemplateRegexp = regexp.MustCompile("{(date|time|isodate|elapsed)( micros)?}|.+?")
+var prefixTemplateRegexp = regexp.MustCompile("{(date|time|isodate|elapsed)( millis)?( micros)?}|.+?")
 
 func (l *Logger) formatHeader(buf *[]byte) {
 	for _, groups := range prefixTemplateRegexp.FindAllSubmatch(l.prefixFormatted, -1) {
 		if len(groups[1]) != 0 {
 			s := string(groups[1])
-			includeMicros := len(groups[2]) > 0
+			includeMillis := bytes.Equal(groups[2], []byte(" millis"))
+			includeMicros := bytes.Equal(groups[2], []byte(" micros"))
 			if s == "date" {
 				l.appendDate(buf, false)
 			} else if s == "time" {
-				l.appendTime(buf, includeMicros)
+				l.appendTime(buf, includeMillis, includeMicros)
 			} else if s == "isodate" {
-				l.appendIsoDate(buf, includeMicros)
+				l.appendIsoDate(buf, includeMillis, includeMicros)
 			} else if s == "elapsed" {
 				l.appendElapsed(buf)
 			}
@@ -500,7 +505,7 @@ func (l *Logger) formatHeader(buf *[]byte) {
 	}
 
 	if l.flag&Lisodate != 0 {
-		l.appendIsoDate(buf, l.flag&Lmicroseconds != 0)
+		l.appendIsoDate(buf, false, l.flag&Lmicroseconds != 0)
 		*buf = append(*buf, ' ')
 	} else {
 		if l.flag&Ldate != 0 {
@@ -508,7 +513,7 @@ func (l *Logger) formatHeader(buf *[]byte) {
 			*buf = append(*buf, ' ')
 		}
 		if l.flag&(Ltime|Lmicroseconds) != 0 {
-			l.appendTime(buf, l.flag&Lmicroseconds != 0)
+			l.appendTime(buf, false, l.flag&Lmicroseconds != 0)
 			*buf = append(*buf, ' ')
 		}
 	}
